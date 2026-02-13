@@ -1,0 +1,1614 @@
+import { useState, useCallback, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  FileUp,
+  Globe,
+  ClipboardPaste,
+  Check,
+  ArrowRight,
+  ArrowLeft,
+  Upload,
+  FileJson,
+  FileSpreadsheet,
+  FileText,
+  FileCode,
+  Search,
+  Loader2,
+  Image,
+  Video,
+  Package,
+  Sparkles,
+  LayoutGrid,
+  List,
+  Eye,
+  Pencil,
+  X,
+  Copy,
+  ChevronLeft,
+  ChevronRight,
+  AlertTriangle,
+  CheckCircle2,
+  Download,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
+import api from "@/lib/api";
+
+type SourceType = "file" | "url" | "text" | null;
+type Step = 1 | 2 | 3;
+type ViewMode = "grid" | "list";
+
+interface ParsedPrompt {
+  _index: number;
+  _selected: boolean;
+  _edited?: boolean;
+  title: string;
+  content: string;
+  type: "image" | "video";
+  category_name: string;
+  media_url: string | null;
+  thumbnail_url: string | null;
+}
+
+interface FieldMapping {
+  title: string;
+  content: string;
+  type: string;
+  category: string;
+  media_url: string;
+  thumbnail_url: string;
+}
+
+// Parse CSV content into prompts
+const parseCSVContent = (text: string, mapping: FieldMapping): ParsedPrompt[] => {
+  const lines = text.trim().split("\n");
+  if (lines.length < 2) return [];
+  
+  const headers = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
+  
+  const getColIndex = (field: string) => {
+    const idx = headers.findIndex(h => h.toLowerCase() === field.toLowerCase());
+    return idx >= 0 ? idx : -1;
+  };
+  
+  const titleIdx = getColIndex(mapping.title);
+  const contentIdx = getColIndex(mapping.content);
+  const typeIdx = getColIndex(mapping.type);
+  const categoryIdx = getColIndex(mapping.category);
+  const mediaIdx = getColIndex(mapping.media_url);
+  const thumbIdx = getColIndex(mapping.thumbnail_url);
+  
+  return lines.slice(1).filter(line => line.trim()).map((line, i) => {
+    // Simple CSV parse handling quoted fields with commas
+    const cols: string[] = [];
+    let current = "";
+    let inQuotes = false;
+    for (const char of line) {
+      if (char === '"' && !inQuotes) { inQuotes = true; continue; }
+      if (char === '"' && inQuotes) { inQuotes = false; continue; }
+      if (char === "," && !inQuotes) { cols.push(current.trim()); current = ""; continue; }
+      current += char;
+    }
+    cols.push(current.trim());
+    
+    const rawType = typeIdx >= 0 ? cols[typeIdx]?.toLowerCase() : "image";
+    const promptType: "image" | "video" = rawType === "video" ? "video" : "image";
+    
+    return {
+      _index: i,
+      _selected: true,
+      _edited: false,
+      title: titleIdx >= 0 ? (cols[titleIdx] || `Prompt ${i + 1}`) : `Prompt ${i + 1}`,
+      content: contentIdx >= 0 ? (cols[contentIdx] || "") : "",
+      type: promptType,
+      category_name: categoryIdx >= 0 ? (cols[categoryIdx] || "Geral") : "Geral",
+      media_url: mediaIdx >= 0 ? (cols[mediaIdx] || null) : null,
+      thumbnail_url: thumbIdx >= 0 ? (cols[thumbIdx] || null) : null,
+    };
+  });
+};
+
+// Parse JSON content into prompts
+const parseJSONContent = (text: string, mapping: FieldMapping): ParsedPrompt[] => {
+  try {
+    let data = JSON.parse(text);
+    
+    // If the root is an object with an array property, use that
+    if (!Array.isArray(data)) {
+      const arrayKey = Object.keys(data).find(k => Array.isArray(data[k]));
+      if (arrayKey) {
+        data = data[arrayKey];
+      } else {
+        data = [data];
+      }
+    }
+    
+    return data.map((item: Record<string, unknown>, i: number) => {
+      const rawType = String(item[mapping.type] || "image").toLowerCase();
+      const promptType: "image" | "video" = rawType === "video" ? "video" : "image";
+      
+      return {
+        _index: i,
+        _selected: true,
+        _edited: false,
+        title: String(item[mapping.title] || `Prompt ${i + 1}`),
+        content: String(item[mapping.content] || ""),
+        type: promptType,
+        category_name: String(item[mapping.category] || "Geral"),
+        media_url: item[mapping.media_url] ? String(item[mapping.media_url]) : null,
+        thumbnail_url: item[mapping.thumbnail_url] ? String(item[mapping.thumbnail_url]) : null,
+      };
+    });
+  } catch (e) {
+    console.error("JSON parse error:", e);
+    return [];
+  }
+};
+
+// Parse plain text (one prompt per line or paragraph)
+const parseTextContent = (text: string): ParsedPrompt[] => {
+  const blocks = text.includes("\n\n") 
+    ? text.split("\n\n").filter(b => b.trim())
+    : text.split("\n").filter(b => b.trim());
+  
+  return blocks.map((block, i) => {
+    const lines = block.trim().split("\n");
+    const title = lines[0].length > 80 ? lines[0].substring(0, 77) + "..." : lines[0];
+    
+    return {
+      _index: i,
+      _selected: true,
+      _edited: false,
+      title: title,
+      content: block.trim(),
+      type: "image" as const,
+      category_name: "Geral",
+      media_url: null,
+      thumbnail_url: null,
+    };
+  });
+};
+
+// Detect fields from parsed content
+const detectFieldsFromContent = (text: string, format: string): string[] => {
+  if (format === "JSON") {
+    try {
+      let data = JSON.parse(text);
+      if (!Array.isArray(data)) {
+        const arrayKey = Object.keys(data).find(k => Array.isArray(data[k]));
+        data = arrayKey ? data[arrayKey] : [data];
+      }
+      if (data.length > 0 && typeof data[0] === "object") {
+        return Object.keys(data[0]);
+      }
+    } catch { /* ignore */ }
+  }
+  if (format === "CSV") {
+    const firstLine = text.trim().split("\n")[0];
+    if (firstLine) {
+      return firstLine.split(",").map(h => h.trim().replace(/^"|"$/g, ""));
+    }
+  }
+  return ["title", "content", "type", "category_name"];
+};
+
+// Read file content as text
+const readFileAsText = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.readAsText(file);
+  });
+};
+
+const PromptImporter = () => {
+  const [currentStep, setCurrentStep] = useState<Step>(1);
+  const [sourceType, setSourceType] = useState<SourceType>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [urlValue, setUrlValue] = useState("");
+  const [textValue, setTextValue] = useState("");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isParsed, setIsParsed] = useState(false);
+  const [parsedPrompts, setParsedPrompts] = useState<ParsedPrompt[]>([]);
+  const [detectedFormat, setDetectedFormat] = useState<string | null>(null);
+  const [detectedFields, setDetectedFields] = useState<string[]>([]);
+  const [fieldMapping, setFieldMapping] = useState<FieldMapping>({
+    title: "title",
+    content: "content",
+    type: "type",
+    category: "category_name",
+    media_url: "media_url",
+    thumbnail_url: "thumbnail_url",
+  });
+
+  // Step 2 state
+  const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"all" | "image" | "video">("all");
+  const [viewingPrompt, setViewingPrompt] = useState<ParsedPrompt | null>(null);
+  const [editingPrompt, setEditingPrompt] = useState<ParsedPrompt | null>(null);
+  const [editForm, setEditForm] = useState<ParsedPrompt | null>(null);
+
+  // Step 3 state
+  const [isImporting, setIsImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{imported: number; errors: number; categoriesUsed: string[]; imagesDownloaded?: number} | null>(null);
+  const [importPhase, setImportPhase] = useState<'idle' | 'downloading_images' | 'importing' | 'done'>('idle');
+  const [downloadProgress, setDownloadProgress] = useState({ current: 0, total: 0 });
+
+  // Detect format from text input
+  const detectFormat = useCallback((text: string) => {
+    if (!text.trim()) {
+      setDetectedFormat(null);
+      return;
+    }
+    
+    try {
+      JSON.parse(text);
+      setDetectedFormat("JSON");
+      return;
+    } catch {}
+    
+    if (text.includes(",") && text.split("\n")[0].includes(",")) {
+      setDetectedFormat("CSV");
+      return;
+    }
+    
+    if (text.includes("<prompt>") || text.includes("<?xml")) {
+      setDetectedFormat("XML");
+      return;
+    }
+    
+    setDetectedFormat("Lista");
+  }, []);
+
+  // Parse file content based on format
+  const parseAndSetPrompts = useCallback((text: string, format: string) => {
+    let prompts: ParsedPrompt[] = [];
+    const fields = detectFieldsFromContent(text, format);
+    setDetectedFields(fields);
+    
+    if (format === "JSON") {
+      prompts = parseJSONContent(text, fieldMapping);
+    } else if (format === "CSV") {
+      prompts = parseCSVContent(text, fieldMapping);
+    } else {
+      prompts = parseTextContent(text);
+    }
+    
+    if (prompts.length === 0) {
+      toast.error("Nenhum prompt encontrado no arquivo. Verifique o formato.");
+      setIsAnalyzing(false);
+      return;
+    }
+    
+    setParsedPrompts(prompts);
+    setIsParsed(true);
+    setIsAnalyzing(false);
+    toast.success(`${prompts.length} prompts encontrados!`);
+  }, [fieldMapping]);
+
+  // Handle file parsing (reads real file content)
+  const handleParseFile = useCallback(async (file: File) => {
+    setIsAnalyzing(true);
+    const ext = file.name.split(".").pop()?.toUpperCase() || "TXT";
+    setDetectedFormat(ext);
+    
+    try {
+      const text = await readFileAsText(file);
+      parseAndSetPrompts(text, ext);
+    } catch (err) {
+      console.error("File read error:", err);
+      toast.error("Erro ao ler o arquivo.");
+      setIsAnalyzing(false);
+    }
+  }, [parseAndSetPrompts]);
+
+  // Handle file drop
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      const file = files[0];
+      const ext = file.name.split(".").pop()?.toLowerCase();
+      if (["json", "csv", "xlsx", "txt", "xml"].includes(ext || "")) {
+        setUploadedFile(file);
+        handleParseFile(file);
+      }
+    }
+  }, [handleParseFile]);
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      setUploadedFile(files[0]);
+      handleParseFile(files[0]);
+    }
+  }, [handleParseFile]);
+
+  const handleAnalyzeUrl = useCallback(async () => {
+    if (!urlValue.trim()) return;
+    setIsAnalyzing(true);
+    setDetectedFormat("JSON");
+    
+    try {
+      const response = await fetch(urlValue.trim());
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const text = await response.text();
+      
+      // Auto-detect format from content
+      let format = "JSON";
+      try { JSON.parse(text); } catch {
+        format = text.includes(",") && text.split("\n")[0].includes(",") ? "CSV" : "Lista";
+      }
+      setDetectedFormat(format);
+      parseAndSetPrompts(text, format);
+    } catch (err) {
+      console.error("URL fetch error:", err);
+      toast.error("Erro ao buscar URL. Verifique se o endereço está correto e acessível.");
+      setIsAnalyzing(false);
+    }
+  }, [urlValue, parseAndSetPrompts]);
+
+  const handleAnalyzeText = useCallback(() => {
+    if (!textValue.trim()) return;
+    setIsAnalyzing(true);
+    
+    // Detect format
+    let format = "Lista";
+    try {
+      JSON.parse(textValue);
+      format = "JSON";
+    } catch {
+      if (textValue.includes(",") && textValue.split("\n")[0].includes(",")) {
+        format = "CSV";
+      }
+    }
+    
+    setDetectedFormat(format);
+    parseAndSetPrompts(textValue, format);
+  }, [textValue, parseAndSetPrompts]);
+
+  // Selection handlers
+  const toggleSelectAll = useCallback(() => {
+    const allSelected = parsedPrompts.every(p => p._selected);
+    setParsedPrompts(prev => prev.map(p => ({ ...p, _selected: !allSelected })));
+  }, [parsedPrompts]);
+
+  const togglePromptSelection = useCallback((index: number) => {
+    setParsedPrompts(prev => prev.map(p => 
+      p._index === index ? { ...p, _selected: !p._selected } : p
+    ));
+  }, []);
+
+  // Filter and search
+  const filteredPrompts = useMemo(() => {
+    return parsedPrompts.filter(p => {
+      const matchesSearch = !searchQuery || 
+        p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        p.content.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesType = typeFilter === "all" || p.type === typeFilter;
+      return matchesSearch && matchesType;
+    });
+  }, [parsedPrompts, searchQuery, typeFilter]);
+
+  // Stats calculation
+  const stats = useMemo(() => {
+    if (parsedPrompts.length === 0) return null;
+    
+    const selected = parsedPrompts.filter(p => p._selected);
+    const withThumbnail = selected.filter(p => p.thumbnail_url).length;
+    const withMedia = selected.filter(p => p.media_url).length;
+    const imageCount = selected.filter(p => p.type === "image").length;
+    const videoCount = selected.filter(p => p.type === "video").length;
+    const categories = selected.reduce((acc, p) => {
+      acc[p.category_name] = (acc[p.category_name] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    
+    return {
+      total: parsedPrompts.length,
+      selected: selected.length,
+      withThumbnail,
+      withMedia,
+      withoutThumbnail: selected.length - withThumbnail,
+      withoutMedia: selected.length - withMedia,
+      imageCount,
+      videoCount,
+      categories,
+    };
+  }, [parsedPrompts]);
+
+  // Edit handlers
+  const handleEditSave = useCallback(() => {
+    if (!editForm) return;
+    setParsedPrompts(prev => prev.map(p => 
+      p._index === editForm._index ? { ...editForm, _edited: true } : p
+    ));
+    setEditingPrompt(null);
+    setEditForm(null);
+    toast.success("Prompt atualizado!");
+  }, [editForm]);
+
+  // Copy handler
+  const handleCopyPrompt = useCallback((content: string) => {
+    navigator.clipboard.writeText(content);
+    toast.success("Prompt copiado!");
+  }, []);
+
+  // Navigate viewing
+  const navigateViewing = useCallback((direction: "prev" | "next") => {
+    if (!viewingPrompt) return;
+    const currentIdx = filteredPrompts.findIndex(p => p._index === viewingPrompt._index);
+    const newIdx = direction === "prev" 
+      ? (currentIdx - 1 + filteredPrompts.length) % filteredPrompts.length
+      : (currentIdx + 1) % filteredPrompts.length;
+    setViewingPrompt(filteredPrompts[newIdx]);
+  }, [viewingPrompt, filteredPrompts]);
+
+  const canProceed = isParsed && parsedPrompts.length > 0;
+
+  const steps = [
+    { number: 1, label: "Fonte & Upload", completed: currentStep > 1 },
+    { number: 2, label: "Preview", completed: currentStep > 2 },
+    { number: 3, label: "Importar", completed: false },
+  ];
+
+  const sourceOptions = [
+    {
+      type: "file" as const,
+      icon: FileUp,
+      title: "Upload de Arquivo",
+      description: "JSON, CSV, XLSX, TXT ou XML",
+      detail: "Arraste ou clique para selecionar",
+    },
+    {
+      type: "url" as const,
+      icon: Globe,
+      title: "Importar de URL",
+      description: "Cole a URL de um site com prompts",
+      detail: "Auto-detecta formato",
+    },
+    {
+      type: "text" as const,
+      icon: ClipboardPaste,
+      title: "Colar Texto",
+      description: "Cole dados brutos (JSON, CSV, lista)",
+      detail: "Parser inteligente",
+    },
+  ];
+
+  const formatInfo = [
+    { icon: FileJson, label: "JSON", desc: "Objeto ou array com prompts", color: "text-warning" },
+    { icon: FileSpreadsheet, label: "CSV", desc: "Colunas: titulo, prompt, tipo, categoria, thumb", color: "text-success" },
+    { icon: FileSpreadsheet, label: "XLSX", desc: "Planilha com cabeçalho na primeira linha", color: "text-success" },
+    { icon: FileText, label: "TXT", desc: "Um prompt por bloco (separado por linha vazia)", color: "text-primary" },
+    { icon: FileCode, label: "XML", desc: "Tags <prompt> com sub-elementos", color: "text-accent-foreground" },
+  ];
+
+  const getFileIcon = (filename: string) => {
+    const ext = filename.split(".").pop()?.toLowerCase();
+    switch (ext) {
+      case "json": return <FileJson className="h-8 w-8 text-warning" />;
+      case "csv":
+      case "xlsx": return <FileSpreadsheet className="h-8 w-8 text-success" />;
+      case "xml": return <FileCode className="h-8 w-8 text-accent-foreground" />;
+      default: return <FileText className="h-8 w-8 text-primary" />;
+    }
+  };
+
+  const allCategories = useMemo(() => {
+    const cats = new Set(parsedPrompts.map(p => p.category_name));
+    return Array.from(cats);
+  }, [parsedPrompts]);
+
+  return (
+    <div className="space-y-6">
+      {/* Stepper */}
+      <div className="relative">
+        <div className="flex items-center justify-between max-w-2xl mx-auto">
+          {steps.map((step, idx) => (
+            <div key={step.number} className="flex items-center flex-1">
+              <div className="flex flex-col items-center">
+                <div
+                  className={cn(
+                    "h-10 w-10 rounded-full flex items-center justify-center border-2 transition-all duration-300",
+                    step.completed
+                      ? "bg-success border-success text-success-foreground"
+                      : currentStep === step.number
+                      ? "bg-primary border-primary text-primary-foreground"
+                      : "bg-transparent border-muted-foreground/30 text-muted-foreground"
+                  )}
+                >
+                  {step.completed ? (
+                    <Check className="h-5 w-5" />
+                  ) : (
+                    <span className="font-semibold">{step.number}</span>
+                  )}
+                </div>
+                <span
+                  className={cn(
+                    "mt-2 text-sm font-medium transition-colors",
+                    step.completed
+                      ? "text-success"
+                      : currentStep === step.number
+                      ? "text-foreground"
+                      : "text-muted-foreground"
+                  )}
+                >
+                  {step.label}
+                </span>
+              </div>
+              
+              {idx < steps.length - 1 && (
+                <div className="flex-1 mx-4 h-0.5 bg-muted-foreground/20 relative">
+                  <motion.div
+                    className="absolute inset-0 bg-primary"
+                    initial={{ scaleX: 0 }}
+                    animate={{ scaleX: step.completed ? 1 : 0 }}
+                    style={{ transformOrigin: "left" }}
+                    transition={{ duration: 0.3 }}
+                  />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Step Content */}
+      <AnimatePresence mode="wait">
+        {currentStep === 1 && (
+          <motion.div
+            key="step1"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.3 }}
+            className="space-y-6"
+          >
+            {/* Title */}
+            <div className="text-center">
+              <h2 className="text-xl font-semibold text-foreground">De onde vêm os prompts?</h2>
+              <p className="text-muted-foreground mt-1">Selecione a fonte de dados e faça upload dos arquivos</p>
+            </div>
+
+            {/* Source Selection */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {sourceOptions.map((option) => (
+                <motion.button
+                  key={option.type}
+                  onClick={() => {
+                    setSourceType(option.type);
+                    setIsParsed(false);
+                    setParsedPrompts([]);
+                    setUploadedFile(null);
+                    setUrlValue("");
+                    setTextValue("");
+                  }}
+                  className={cn(
+                    "relative p-6 rounded-2xl border text-left transition-all duration-200",
+                    sourceType === option.type
+                      ? "border-primary bg-primary/5 shadow-lg shadow-primary/10"
+                      : "border-white/10 bg-card hover:border-white/20 hover:bg-white/5"
+                  )}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                >
+                  <option.icon className={cn(
+                    "h-8 w-8 mb-3",
+                    sourceType === option.type ? "text-primary" : "text-muted-foreground"
+                  )} />
+                  <h3 className="font-semibold text-foreground">{option.title}</h3>
+                  <p className="text-sm text-muted-foreground mt-1">{option.description}</p>
+                  <p className="text-xs text-muted-foreground/70 mt-2">{option.detail}</p>
+                  
+                  {sourceType === option.type && (
+                    <motion.div
+                      layoutId="source-indicator"
+                      className="absolute top-3 right-3 h-3 w-3 rounded-full bg-primary"
+                    />
+                  )}
+                </motion.button>
+              ))}
+            </div>
+
+            {/* Source-specific content */}
+            <AnimatePresence mode="wait">
+              {sourceType === "file" && (
+                <motion.div
+                  key="file-upload"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="space-y-4"
+                >
+                  <div
+                    onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                    onDragLeave={() => setIsDragging(false)}
+                    onDrop={handleDrop}
+                    className={cn(
+                      "relative border-2 border-dashed rounded-2xl p-12 text-center transition-all duration-200",
+                      isDragging
+                        ? "border-primary bg-primary/10 scale-[1.01]"
+                        : "border-white/20 hover:border-primary/50 hover:bg-primary/5"
+                    )}
+                  >
+                    {uploadedFile ? (
+                      <div className="flex flex-col items-center gap-3">
+                        {getFileIcon(uploadedFile.name)}
+                        <div>
+                          <p className="font-medium text-foreground">{uploadedFile.name}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {(uploadedFile.size / 1024).toFixed(1)} KB
+                          </p>
+                        </div>
+                        {isAnalyzing && (
+                          <div className="flex items-center gap-2 text-primary">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span className="text-sm">Analisando arquivo...</span>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        <Upload className={cn(
+                          "h-12 w-12 mx-auto mb-4 transition-colors",
+                          isDragging ? "text-primary" : "text-muted-foreground"
+                        )} />
+                        <p className="text-foreground font-medium">Arraste arquivos aqui ou</p>
+                        <label className="inline-block mt-2">
+                          <input
+                            type="file"
+                            className="hidden"
+                            accept=".json,.csv,.xlsx,.txt,.xml"
+                            onChange={handleFileSelect}
+                          />
+                          <span className="px-4 py-2 rounded-lg bg-primary text-primary-foreground cursor-pointer hover:bg-primary/90 transition-colors">
+                            Escolher Arquivo
+                          </span>
+                        </label>
+                        <p className="text-sm text-muted-foreground mt-4">
+                          JSON, CSV, XLSX, TXT, XML • Máx: 50MB por arquivo
+                        </p>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Supported formats */}
+                  <div className="rounded-xl border border-white/10 bg-card p-4">
+                    <p className="text-sm font-medium text-foreground mb-3">Formatos suportados:</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                      {formatInfo.map((format) => (
+                        <div key={format.label} className="flex items-start gap-2">
+                          <format.icon className={cn("h-4 w-4 mt-0.5 shrink-0", format.color)} />
+                          <div>
+                            <span className="text-sm font-medium text-foreground">{format.label}</span>
+                            <p className="text-xs text-muted-foreground">{format.desc}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {sourceType === "url" && (
+                <motion.div
+                  key="url-input"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="rounded-2xl border border-white/10 bg-card p-6 space-y-4"
+                >
+                  <div>
+                    <Label className="text-foreground">URL da fonte:</Label>
+                    <div className="flex gap-2 mt-2">
+                      <Input
+                        value={urlValue}
+                        onChange={(e) => setUrlValue(e.target.value)}
+                        placeholder="https://exemplo.com/prompts"
+                        className="flex-1"
+                      />
+                      <Button
+                        onClick={handleAnalyzeUrl}
+                        disabled={!urlValue.trim() || isAnalyzing}
+                        className="gap-2"
+                      >
+                        {isAnalyzing ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Search className="h-4 w-4" />
+                        )}
+                        Analisar
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-2 p-3 rounded-lg bg-primary/5 border border-primary/20">
+                    <Sparkles className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                    <div className="text-sm">
+                      <span className="text-foreground font-medium">Dica:</span>
+                      <span className="text-muted-foreground"> Cole a URL de qualquer site com prompts. O sistema vai tentar extrair automaticamente.</span>
+                    </div>
+                  </div>
+
+                  <div className="text-sm text-muted-foreground">
+                    <p className="font-medium text-foreground mb-2">Fontes compatíveis testadas:</p>
+                    <ul className="space-y-1 list-disc list-inside">
+                      <li>Sites com listagem de prompts</li>
+                      <li>APIs públicas que retornam JSON</li>
+                      <li>Páginas com tabelas de prompts</li>
+                      <li>Feeds RSS/Atom</li>
+                    </ul>
+                  </div>
+                </motion.div>
+              )}
+
+              {sourceType === "text" && (
+                <motion.div
+                  key="text-input"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="rounded-2xl border border-white/10 bg-card p-6 space-y-4"
+                >
+                  <div>
+                    <Label className="text-foreground">Cole os dados aqui:</Label>
+                    <Textarea
+                      value={textValue}
+                      onChange={(e) => {
+                        setTextValue(e.target.value);
+                        detectFormat(e.target.value);
+                      }}
+                      placeholder={`Cole aqui seus prompts em qualquer formato:
+- JSON: [{"title": "...", "content": "..."}]
+- CSV: titulo,prompt,tipo,categoria
+- Lista: Um prompt por parágrafo`}
+                      className="mt-2 min-h-[300px] font-mono text-sm"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      {detectedFormat && (
+                        <Badge className="bg-success/20 text-success border-success/30">
+                          {detectedFormat}
+                        </Badge>
+                      )}
+                      {textValue.trim() && !isParsed && (
+                        <span className="text-sm text-muted-foreground">
+                          {textValue.split("\n").filter(l => l.trim()).length} linhas detectadas
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      onClick={handleAnalyzeText}
+                      disabled={!textValue.trim() || isAnalyzing}
+                      className="gap-2"
+                    >
+                      {isAnalyzing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Search className="h-4 w-4" />
+                      )}
+                      Analisar
+                    </Button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Field Mapping & Summary */}
+            <AnimatePresence>
+              {isParsed && parsedPrompts.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  className="space-y-4"
+                >
+                  {/* Field Mapping */}
+                  <div className="rounded-2xl border border-white/10 bg-card p-6">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Sparkles className="h-5 w-5 text-primary" />
+                      <h3 className="font-semibold text-foreground">Mapeamento de Campos</h3>
+                    </div>
+                    
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Detectamos {parsedPrompts.length} prompts no arquivo. Confirme o mapeamento:
+                    </p>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {[
+                        { key: "title", label: "Título", icon: FileText },
+                        { key: "content", label: "Prompt (conteúdo)", icon: FileText },
+                        { key: "type", label: "Tipo (img/vid)", icon: Image },
+                        { key: "category", label: "Categoria", icon: Package },
+                        { key: "media_url", label: "URL da Mídia", icon: Image },
+                        { key: "thumbnail_url", label: "URL da Thumbnail", icon: Image },
+                      ].map((field) => (
+                        <div key={field.key} className="flex items-center gap-3">
+                          <div className="flex items-center gap-2 min-w-[140px]">
+                            <field.icon className="h-4 w-4 text-muted-foreground" />
+                            <span className="text-sm text-foreground">{field.label}</span>
+                          </div>
+                          <span className="text-muted-foreground">←→</span>
+                          <Select
+                            value={fieldMapping[field.key as keyof FieldMapping]}
+                            onValueChange={(value) =>
+                              setFieldMapping((prev) => ({ ...prev, [field.key]: value }))
+                            }
+                          >
+                            <SelectTrigger className="flex-1">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="_ignore">— Ignorar —</SelectItem>
+                              {detectedFields.map((f) => (
+                                <SelectItem key={f} value={f}>
+                                  {f}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
+                      <Sparkles className="h-3 w-3" />
+                      <span>Auto-mapeado com base nos nomes dos campos</span>
+                    </div>
+                  </div>
+
+                  {/* Summary */}
+                  {stats && (
+                    <div className="rounded-2xl border border-white/10 bg-card p-6">
+                      <h3 className="font-semibold text-foreground mb-4">📊 Resumo da Importação</h3>
+                      
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                        <div>
+                          <span className="text-muted-foreground">Fonte:</span>
+                          <p className="text-foreground font-medium">
+                            {sourceType === "file" && uploadedFile ? `Upload (${uploadedFile.name})` : 
+                             sourceType === "url" ? "URL" : "Texto colado"}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Formato:</span>
+                          <p className="text-foreground font-medium">{detectedFormat}</p>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Total de prompts:</span>
+                          <p className="text-foreground font-medium">{stats.total}</p>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Com thumbnail:</span>
+                          <p className="text-foreground font-medium">
+                            {stats.withThumbnail} ({Math.round(stats.withThumbnail / stats.total * 100)}%)
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Com mídia:</span>
+                          <p className="text-foreground font-medium">
+                            {stats.withMedia} ({Math.round(stats.withMedia / stats.total * 100)}%)
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Tipos:</span>
+                          <p className="text-foreground font-medium flex items-center gap-2">
+                            <span className="flex items-center gap-1">
+                              <Image className="h-3 w-3" /> {stats.imageCount}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Video className="h-3 w-3" /> {stats.videoCount}
+                            </span>
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4">
+                        <span className="text-sm text-muted-foreground">Categorias:</span>
+                        <div className="flex flex-wrap gap-2 mt-1">
+                          {Object.entries(stats.categories).map(([cat, count]) => (
+                            <Badge key={cat} variant="secondary">
+                              {cat} ({count})
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Navigation Buttons */}
+            <div className="flex justify-between pt-4">
+              <Button variant="outline" disabled className="gap-2">
+                <ArrowLeft className="h-4 w-4" />
+                Voltar
+              </Button>
+              <Button
+                onClick={() => setCurrentStep(2)}
+                disabled={!canProceed}
+                className="gap-2"
+              >
+                Próximo: Preview
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </motion.div>
+        )}
+
+        {/* STEP 2: Preview & Selection */}
+        {currentStep === 2 && (
+          <motion.div
+            key="step2"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.3 }}
+            className="space-y-4"
+          >
+            {/* Toolbar */}
+            <div className="rounded-xl border border-white/10 bg-card p-4">
+              <div className="flex flex-wrap items-center gap-4">
+                {/* Select All */}
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    checked={parsedPrompts.every(p => p._selected)}
+                    onCheckedChange={toggleSelectAll}
+                    id="select-all"
+                  />
+                  <label htmlFor="select-all" className="text-sm text-foreground cursor-pointer">
+                    Selecionar Todos ({parsedPrompts.length})
+                  </label>
+                </div>
+
+                <div className="h-6 w-px bg-white/10" />
+
+                {/* Selected count */}
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 className="h-4 w-4 text-success" />
+                  <span className="text-sm text-foreground">
+                    {stats?.selected || 0} selecionados
+                  </span>
+                </div>
+
+                <div className="h-6 w-px bg-white/10" />
+
+                {/* Type filters */}
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant={typeFilter === "all" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setTypeFilter("all")}
+                  >
+                    Todos
+                  </Button>
+                  <Button
+                    variant={typeFilter === "image" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setTypeFilter("image")}
+                    className="gap-1.5"
+                  >
+                    <Image className="h-3.5 w-3.5" />
+                    Imagens ({parsedPrompts.filter(p => p.type === "image").length})
+                  </Button>
+                  <Button
+                    variant={typeFilter === "video" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setTypeFilter("video")}
+                    className="gap-1.5"
+                  >
+                    <Video className="h-3.5 w-3.5" />
+                    Vídeos ({parsedPrompts.filter(p => p.type === "video").length})
+                  </Button>
+                </div>
+
+                <div className="flex-1" />
+
+                {/* Search */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Buscar..."
+                    className="pl-9 w-48"
+                  />
+                </div>
+
+                {/* View Mode Toggle */}
+                <div className="flex items-center rounded-lg border border-white/10 p-1">
+                  <Button
+                    variant={viewMode === "grid" ? "default" : "ghost"}
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    onClick={() => setViewMode("grid")}
+                  >
+                    <LayoutGrid className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant={viewMode === "list" ? "default" : "ghost"}
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    onClick={() => setViewMode("list")}
+                  >
+                    <List className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Grid/List View */}
+            {viewMode === "grid" ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {filteredPrompts.map((prompt) => (
+                  <motion.div
+                    key={prompt._index}
+                    layout
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className={cn(
+                      "group relative rounded-xl border bg-card overflow-hidden transition-all duration-200",
+                      prompt._selected
+                        ? "border-primary/50 bg-primary/5"
+                        : "border-white/10 opacity-60 hover:opacity-100"
+                    )}
+                  >
+                    {/* Checkbox */}
+                    <div className="absolute top-3 left-3 z-10">
+                      <Checkbox
+                        checked={prompt._selected}
+                        onCheckedChange={() => togglePromptSelection(prompt._index)}
+                        className="bg-background/80 backdrop-blur-sm"
+                      />
+                    </div>
+
+                    {/* Edited badge */}
+                    {prompt._edited && (
+                      <div className="absolute top-3 right-3 z-10">
+                        <Badge className="bg-primary/20 text-primary border-primary/30 text-xs">
+                          <Pencil className="h-3 w-3 mr-1" />
+                          Editado
+                        </Badge>
+                      </div>
+                    )}
+
+                    {/* Thumbnail */}
+                    <div className="aspect-video bg-muted relative">
+                      {prompt.thumbnail_url ? (
+                        <img
+                          src={prompt.thumbnail_url}
+                          alt={prompt.title}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground">
+                          {prompt.type === "image" ? (
+                            <Image className="h-8 w-8 mb-2" />
+                          ) : (
+                            <Video className="h-8 w-8 mb-2" />
+                          )}
+                          <span className="text-xs">Sem thumbnail</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Content */}
+                    <div className="p-4 space-y-2">
+                      <h4 className="font-medium text-foreground line-clamp-2 leading-tight">
+                        {prompt.title}
+                      </h4>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Badge
+                          className={cn(
+                            "text-xs",
+                            prompt.type === "image"
+                              ? "bg-primary/20 text-primary border-primary/30"
+                              : "bg-accent/20 text-accent-foreground border-accent/30"
+                          )}
+                        >
+                          {prompt.type === "image" ? (
+                            <><Image className="h-3 w-3 mr-1" /> Imagem</>
+                          ) : (
+                            <><Video className="h-3 w-3 mr-1" /> Vídeo</>
+                          )}
+                        </Badge>
+                        <Badge variant="secondary" className="text-xs">
+                          {prompt.category_name}
+                        </Badge>
+                        {!prompt.media_url && (
+                          <Badge className="bg-warning/20 text-warning border-warning/30 text-xs">
+                            <AlertTriangle className="h-3 w-3 mr-1" />
+                            Sem mídia
+                          </Badge>
+                        )}
+                      </div>
+
+                      <p className="text-xs text-muted-foreground line-clamp-2">
+                        {prompt.content}
+                      </p>
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-2 pt-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="flex-1 gap-1.5"
+                          onClick={() => setViewingPrompt(prompt)}
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          Ver
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="flex-1 gap-1.5"
+                          onClick={() => {
+                            setEditingPrompt(prompt);
+                            setEditForm({ ...prompt });
+                          }}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                          Editar
+                        </Button>
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            ) : (
+              /* List View */
+              <div className="rounded-xl border border-white/10 bg-card overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-white/10 bg-muted/30">
+                        <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase w-12"></th>
+                        <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase w-16">Thumb</th>
+                        <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase">Título</th>
+                        <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase w-24">Tipo</th>
+                        <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase w-28">Categoria</th>
+                        <th className="p-3 text-left text-xs font-medium text-muted-foreground uppercase w-24">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredPrompts.map((prompt) => (
+                        <tr
+                          key={prompt._index}
+                          className={cn(
+                            "border-b border-white/5 transition-colors",
+                            prompt._selected
+                              ? "bg-primary/5"
+                              : "opacity-60 hover:opacity-100"
+                          )}
+                        >
+                          <td className="p-3">
+                            <Checkbox
+                              checked={prompt._selected}
+                              onCheckedChange={() => togglePromptSelection(prompt._index)}
+                            />
+                          </td>
+                          <td className="p-3">
+                            <div className="h-10 w-14 rounded bg-muted overflow-hidden">
+                              {prompt.thumbnail_url ? (
+                                <img
+                                  src={prompt.thumbnail_url}
+                                  alt=""
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center">
+                                  {prompt.type === "image" ? (
+                                    <Image className="h-4 w-4 text-muted-foreground" />
+                                  ) : (
+                                    <Video className="h-4 w-4 text-muted-foreground" />
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-foreground line-clamp-1">
+                                {prompt.title}
+                              </span>
+                              {prompt._edited && (
+                                <Badge className="bg-primary/20 text-primary border-primary/30 text-xs shrink-0">
+                                  <Pencil className="h-2.5 w-2.5" />
+                                </Badge>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <Badge
+                              className={cn(
+                                "text-xs",
+                                prompt.type === "image"
+                                  ? "bg-primary/20 text-primary border-primary/30"
+                                  : "bg-accent/20 text-accent-foreground border-accent/30"
+                              )}
+                            >
+                              {prompt.type === "image" ? "Imagem" : "Vídeo"}
+                            </Badge>
+                          </td>
+                          <td className="p-3">
+                            <span className="text-sm text-muted-foreground">
+                              {prompt.category_name}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0"
+                                onClick={() => setViewingPrompt(prompt)}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0"
+                                onClick={() => {
+                                  setEditingPrompt(prompt);
+                                  setEditForm({ ...prompt });
+                                }}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Summary Bar */}
+            <div className="sticky bottom-0 rounded-xl border border-white/10 bg-card/95 backdrop-blur-sm p-4">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex flex-wrap items-center gap-4 text-sm">
+                  <span className="flex items-center gap-1.5 text-foreground font-medium">
+                    <CheckCircle2 className="h-4 w-4 text-success" />
+                    {stats?.selected || 0} de {stats?.total || 0} selecionados
+                  </span>
+                  <span className="text-muted-foreground">•</span>
+                  <span className="flex items-center gap-1.5 text-muted-foreground">
+                    <Image className="h-3.5 w-3.5" />
+                    {stats?.imageCount || 0} imagens
+                  </span>
+                  <span className="flex items-center gap-1.5 text-muted-foreground">
+                    <Video className="h-3.5 w-3.5" />
+                    {stats?.videoCount || 0} vídeos
+                  </span>
+                  {(stats?.withoutThumbnail || 0) > 0 && (
+                    <>
+                      <span className="text-muted-foreground">•</span>
+                      <span className="flex items-center gap-1.5 text-warning">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        {stats?.withoutThumbnail} sem thumbnail
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => setCurrentStep(1)}
+                    className="gap-2"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    Voltar à Fonte
+                  </Button>
+                  <Button
+                    onClick={() => setCurrentStep(3)}
+                    disabled={(stats?.selected || 0) === 0}
+                    className="gap-2"
+                  >
+                    <Download className="h-4 w-4" />
+                    Importar {stats?.selected || 0} Prompts
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* STEP 3: Import */}
+        {currentStep === 3 && (
+          <motion.div
+            key="step3"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="rounded-2xl border border-white/10 bg-card p-12 flex flex-col items-center justify-center text-center"
+          >
+            <div className="h-16 w-16 rounded-2xl bg-muted/50 flex items-center justify-center mb-6">
+              <Upload className="h-8 w-8 text-muted-foreground" />
+            </div>
+            <h3 className="text-xl font-semibold text-foreground mb-2">Importar Prompts</h3>
+            <p className="text-muted-foreground max-w-md mb-6">
+              Confirme e execute a importação para o banco de dados.
+            </p>
+            <Badge className="bg-warning/15 text-warning border-warning/30">
+              Fase 5 - Em desenvolvimento
+            </Badge>
+            
+            <div className="flex gap-3 mt-8">
+              <Button variant="outline" onClick={() => setCurrentStep(2)} className="gap-2">
+                <ArrowLeft className="h-4 w-4" />
+                Voltar
+              </Button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* View Modal */}
+      <Dialog open={!!viewingPrompt} onOpenChange={() => setViewingPrompt(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between">
+              <span>{viewingPrompt?.title}</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0"
+                onClick={() => setViewingPrompt(null)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </DialogTitle>
+          </DialogHeader>
+
+          {viewingPrompt && (
+            <div className="space-y-4">
+              {/* Media */}
+              <div className="aspect-video rounded-lg bg-muted overflow-hidden">
+                {viewingPrompt.thumbnail_url || viewingPrompt.media_url ? (
+                  <img
+                    src={viewingPrompt.media_url || viewingPrompt.thumbnail_url || ""}
+                    alt={viewingPrompt.title}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground">
+                    {viewingPrompt.type === "image" ? (
+                      <Image className="h-12 w-12 mb-2" />
+                    ) : (
+                      <Video className="h-12 w-12 mb-2" />
+                    )}
+                    <span>Sem mídia</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Info */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <Badge
+                  className={cn(
+                    viewingPrompt.type === "image"
+                      ? "bg-primary/20 text-primary border-primary/30"
+                      : "bg-accent/20 text-accent-foreground border-accent/30"
+                  )}
+                >
+                  {viewingPrompt.type === "image" ? "Imagem" : "Vídeo"}
+                </Badge>
+                <Badge variant="secondary">{viewingPrompt.category_name}</Badge>
+                <span className="text-sm text-muted-foreground">ID: #{viewingPrompt._index}</span>
+              </div>
+
+              {/* Prompt Content */}
+              <div className="space-y-2">
+                <Label>Conteúdo do Prompt</Label>
+                <div className="p-4 rounded-lg bg-muted/50 border border-white/10">
+                  <p className="text-sm text-foreground whitespace-pre-wrap">
+                    {viewingPrompt.content}
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() => handleCopyPrompt(viewingPrompt.content)}
+                >
+                  <Copy className="h-4 w-4" />
+                  Copiar Prompt
+                </Button>
+              </div>
+
+              {/* URLs */}
+              {(viewingPrompt.media_url || viewingPrompt.thumbnail_url) && (
+                <div className="space-y-2 text-sm">
+                  {viewingPrompt.media_url && (
+                    <div>
+                      <span className="text-muted-foreground">Mídia: </span>
+                      <span className="text-foreground break-all">{viewingPrompt.media_url}</span>
+                    </div>
+                  )}
+                  {viewingPrompt.thumbnail_url && (
+                    <div>
+                      <span className="text-muted-foreground">Thumb: </span>
+                      <span className="text-foreground break-all">{viewingPrompt.thumbnail_url}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Navigation */}
+              <div className="flex justify-between pt-4 border-t border-white/10">
+                <Button
+                  variant="outline"
+                  onClick={() => navigateViewing("prev")}
+                  className="gap-2"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Anterior
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => navigateViewing("next")}
+                  className="gap-2"
+                >
+                  Próximo
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Modal */}
+      <Dialog open={!!editingPrompt} onOpenChange={() => { setEditingPrompt(null); setEditForm(null); }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-5 w-5" />
+              Editar Prompt #{editingPrompt?._index}
+            </DialogTitle>
+          </DialogHeader>
+
+          {editForm && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-title">Título</Label>
+                <Input
+                  id="edit-title"
+                  value={editForm.title}
+                  onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-content">Conteúdo do Prompt</Label>
+                <Textarea
+                  id="edit-content"
+                  value={editForm.content}
+                  onChange={(e) => setEditForm({ ...editForm, content: e.target.value })}
+                  className="min-h-[150px]"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Tipo</Label>
+                  <Select
+                    value={editForm.type}
+                    onValueChange={(value: "image" | "video") => setEditForm({ ...editForm, type: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="image">
+                        <span className="flex items-center gap-2">
+                          <Image className="h-4 w-4" /> Imagem
+                        </span>
+                      </SelectItem>
+                      <SelectItem value="video">
+                        <span className="flex items-center gap-2">
+                          <Video className="h-4 w-4" /> Vídeo
+                        </span>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Categoria</Label>
+                  <Select
+                    value={editForm.category_name}
+                    onValueChange={(value) => setEditForm({ ...editForm, category_name: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {allCategories.map((cat) => (
+                        <SelectItem key={cat} value={cat}>
+                          {cat}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-media">URL da Mídia</Label>
+                <Input
+                  id="edit-media"
+                  value={editForm.media_url || ""}
+                  onChange={(e) => setEditForm({ ...editForm, media_url: e.target.value || null })}
+                  placeholder="https://..."
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-thumb">URL da Thumbnail</Label>
+                <Input
+                  id="edit-thumb"
+                  value={editForm.thumbnail_url || ""}
+                  onChange={(e) => setEditForm({ ...editForm, thumbnail_url: e.target.value || null })}
+                  placeholder="https://..."
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-white/10">
+                <Button
+                  variant="outline"
+                  onClick={() => { setEditingPrompt(null); setEditForm(null); }}
+                >
+                  Cancelar
+                </Button>
+                <Button onClick={handleEditSave} className="gap-2">
+                  <Check className="h-4 w-4" />
+                  Salvar Alterações
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+export default PromptImporter;

@@ -1,0 +1,470 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  MEMBER
+}
+
+enum Plan {
+  MENSAL
+  TRIMESTRAL
+  SEMESTRAL
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING
+  EXPIRED
+  CANCELED
+}
+
+enum PromptType {
+  IMAGE
+  VIDEO
+}
+
+enum AIToolCategory {
+  TEXT
+  VIDEO
+  IMAGE
+  VOICE
+  DESIGN
+  EDITING
+  PRESENTATIONS
+}
+
+enum ProductCategory {
+  CURSO
+  EBOOK
+  MENTORIA
+  TEMPLATE
+}
+
+enum ActivityType {
+  LOGIN
+  LOGOUT
+  TWO_FA
+  PROMPT
+  COPY
+  LESSON
+  SUSPEND
+  ADMIN
+  SYSTEM
+  BACKUP
+}
+
+enum ApiKeyType {
+  PRODUCTION
+  TEST
+  IMPORT
+  CUSTOM
+}
+
+enum ApiKeyStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum WebhookStatus {
+  ACTIVE
+  PAUSED
+  ERROR
+}
+
+enum BackupType {
+  AUTO
+  MANUAL
+}
+
+enum BackupStatus {
+  SUCCESS
+  FAILED
+  IN_PROGRESS
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String    @map("password_hash")
+  name          String
+  role          Role      @default(MEMBER)
+  avatarUrl     String?   @map("avatar_url")
+  isActive      Boolean   @default(true) @map("is_active")
+  needsPasswordReset  Boolean   @default(false) @map("needs_password_reset")
+  firstAccessToken    String?   @unique @map("first_access_token")
+  firstAccessExpires  DateTime? @map("first_access_expires")
+  greennClientId      String?   @map("greenn_client_id")
+
+  // Preferências do usuário
+  language        String    @default("pt-BR")
+  theme           String    @default("dark")
+  notifyEmail     Boolean   @default(true) @map("notify_email")
+  notifyPush      Boolean   @default(false) @map("notify_push")
+  notifySound     Boolean   @default(true) @map("notify_sound")
+  notifyNewCourse Boolean   @default(true) @map("notify_new_course")
+  notifyNewPrompt Boolean   @default(true) @map("notify_new_prompt")
+  notifyMarketing Boolean   @default(false) @map("notify_marketing")
+  notifyUpdates   Boolean   @default(false) @map("notify_updates")
+
+  // Perfil adicional
+  phone           String?
+  location        String?
+
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  subscription   Subscription?
+  sessions       Session[]
+  totpCodes      TotpCode[]
+  promptLikes    PromptLike[]
+  authoredPrompts Prompt[]      @relation("AuthoredPrompts")
+  lessonProgress LessonProgress[]
+  activityLogs   ActivityLog[]
+  adminNotes     String?       @map("admin_notes")
+
+  @@map("users")
+}
+
+model Subscription {
+  id              String             @id @default(uuid())
+  userId          String             @unique @map("user_id")
+  plan            Plan               @default(MENSAL)
+  status          SubscriptionStatus @default(ACTIVE)
+  startedAt       DateTime           @default(now()) @map("started_at")
+  expiresAt       DateTime?          @map("expires_at")
+  paymentGateway  String?            @map("payment_gateway")
+  externalId      String?            @map("external_id")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+model Session {
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  token        String    @unique
+  ip           String
+  userAgent    String?   @map("user_agent")
+  device       String?
+  browser      String?
+  city         String?
+  state        String?
+  currentPage  String?   @map("current_page")
+  isActive     Boolean   @default(true) @map("is_active")
+  connectedAt  DateTime  @default(now()) @map("connected_at")
+  lastActivity DateTime  @default(now()) @map("last_activity")
+  expiresAt    DateTime  @map("expires_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model Category {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  slug        String   @unique
+  promptCount Int      @default(0) @map("prompt_count")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  prompts Prompt[]
+
+  @@map("categories")
+}
+
+model Prompt {
+  id           String     @id @default(uuid())
+  title        String
+  type         PromptType
+  categoryId   String     @map("category_id")
+  content      String
+  description  String?
+  thumbnailUrl String?    @map("thumbnail_url")
+  mediaUrl     String?    @map("media_url")
+  tags         String[]
+  likes        Int        @default(0)
+  authorId     String     @map("author_id")
+  isCommunity  Boolean    @default(false) @map("is_community")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  category    Category     @relation(fields: [categoryId], references: [id])
+  author      User         @relation("AuthoredPrompts", fields: [authorId], references: [id])
+  promptLikes PromptLike[]
+
+  @@map("prompts")
+}
+
+model PromptLike {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  promptId  String   @map("prompt_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prompt Prompt @relation(fields: [promptId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, promptId])
+  @@map("prompt_likes")
+}
+
+model AiTool {
+  id          String         @id @default(uuid())
+  name        String
+  description String
+  imageUrl    String         @map("image_url")
+  category    AIToolCategory
+  unlimited   Boolean        @default(false)
+  accessUrl   String?        @map("access_url")
+  isActive    Boolean        @default(true) @map("is_active")
+  order       Int            @default(0)
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  @@map("ai_tools")
+}
+
+model Course {
+  id            String   @id @default(uuid())
+  title         String
+  description   String
+  thumbnail     String
+  totalDuration String   @map("total_duration")
+  isPublished   Boolean  @default(false) @map("is_published")
+  isNew         Boolean  @default(true) @map("is_new")
+  order         Int      @default(0)
+  iconType      String?  @map("icon_type")
+  color         String?
+  isFeatured    Boolean  @default(false) @map("is_featured")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  modules Module[]
+
+  @@map("courses")
+}
+
+model Module {
+  id          String   @id @default(uuid())
+  courseId    String   @map("course_id")
+  title       String
+  description String?
+  order       Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  course  Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessons Lesson[]
+
+  @@map("modules")
+}
+
+model Lesson {
+  id              String   @id @default(uuid())
+  moduleId        String   @map("module_id")
+  title           String
+  description     String?
+  videoUrl        String   @map("video_url")
+  thumbnail       String?
+  duration        String
+  durationSeconds Int      @map("duration_seconds")
+  order           Int      @default(0)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  module   Module           @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  progress LessonProgress[]
+
+  @@map("lessons")
+}
+
+model LessonProgress {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  lessonId    String    @map("lesson_id")
+  completed   Boolean   @default(false)
+  progressPct Int       @default(0) @map("progress_pct")
+  completedAt DateTime? @map("completed_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lessonId])
+  @@map("lesson_progress")
+}
+
+model Product {
+  id            String          @id @default(uuid())
+  title         String
+  description   String
+  imageUrl      String          @map("image_url")
+  price         Decimal         @db.Decimal(10, 2)
+  originalPrice Decimal?        @map("original_price") @db.Decimal(10, 2)
+  discount      Int?
+  features      Json
+  category      ProductCategory
+  isFeatured    Boolean         @default(false) @map("is_featured")
+  salesCount    Int             @default(0) @map("sales_count")
+  rating        Decimal         @default(0) @db.Decimal(2, 1)
+  guarantee     String?
+  purchaseUrl      String?         @map("purchase_url")
+  fullDescription  String?         @map("full_description") @db.Text
+  videoUrl         String?         @map("video_url")
+  isActive         Boolean         @default(true) @map("is_active")
+  order            Int             @default(0)
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+
+  @@map("products")
+}
+
+model ActivityLog {
+  id          String       @id @default(uuid())
+  userId      String?      @map("user_id")
+  type        ActivityType
+  description String
+  ipAddress   String?      @map("ip_address")
+  metadata    Json?
+  createdAt   DateTime     @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([type])
+  @@map("activity_logs")
+}
+
+model ApiKey {
+  id          String       @id @default(uuid())
+  name        String
+  keyHash     String       @map("key_hash")
+  keyPrefix   String       @map("key_prefix")
+  type        ApiKeyType
+  permissions Json
+  status      ApiKeyStatus @default(ACTIVE)
+  expiresAt   DateTime?    @map("expires_at")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  revokedAt   DateTime?    @map("revoked_at")
+
+  @@map("api_keys")
+}
+
+model Webhook {
+  id         String        @id @default(uuid())
+  name       String
+  url        String
+  event      String
+  secret     String
+  status     WebhookStatus @default(ACTIVE)
+  lastStatus Int?          @map("last_status")
+  lastFired  DateTime?     @map("last_fired")
+  failures   Int           @default(0)
+  headers    Json?
+  createdAt  DateTime      @default(now()) @map("created_at")
+  updatedAt  DateTime      @updatedAt @map("updated_at")
+
+  @@map("webhooks")
+}
+
+model TotpCode {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  toolName  String   @map("tool_name")
+  secret    String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("totp_codes")
+}
+
+model BackupRecord {
+  id           String       @id @default(uuid())
+  name         String
+  filename     String
+  type         BackupType
+  status       BackupStatus
+  sizeBytes    BigInt?      @map("size_bytes")
+  components   Json
+  log          Json?
+  durationSecs Int?         @map("duration_secs")
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  @@map("backup_records")
+}
+
+model BackupSchedule {
+  id          String   @id @default(uuid())
+  enabled     Boolean  @default(true)
+  frequency   String   @default("daily")
+  hour        Int      @default(3)
+  minute      Int      @default(0)
+  weekday     Int?
+  components  Json
+  retention   Int      @default(30)
+  notifyEmail Boolean  @default(false) @map("notify_email")
+  email       String?
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("backup_schedule")
+}
+
+model News {
+  id          String    @id @default(uuid())
+  title       String
+  content     String    @db.Text
+  imageUrl    String?   @map("image_url")
+  isPublished Boolean   @default(false) @map("is_published")
+  publishedAt DateTime? @map("published_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@map("news")
+}
+
+model NewsConfig {
+  id              String  @id @default(uuid())
+  autoShowOnLogin Boolean @default(true) @map("auto_show_on_login")
+  displayDays     Int     @default(7) @map("display_days")
+
+  @@map("news_config")
+}
+
+model SharedCredential {
+  id          String   @id @default(uuid())
+  serviceName String   @map("service_name")
+  loginUrl    String?  @map("login_url")
+  username    String?
+  password    String?
+  notes       String?  @db.Text
+  totpSecret  String?  @map("totp_secret")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("shared_credentials")
+}
+
+model PageSettings {
+  id                  String   @id @default(uuid())
+  page                String   @unique
+  coverImageUrl       String?  @map("cover_image_url")
+  bannerTitle         String?  @map("banner_title")
+  bannerSubtitle      String?  @map("banner_subtitle")
+  useFeaturedFallback Boolean  @default(true) @map("use_featured_fallback")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@map("page_settings")
+}

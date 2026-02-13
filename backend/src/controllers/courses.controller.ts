@@ -1,0 +1,324 @@
+import { fireWebhookEvent } from '../services/webhook.service';
+import { Response } from 'express';
+import { notifyMembers } from "../services/notification.service";
+import prisma from '../config/database';
+import { successResponse, errorResponse } from '../utils/response';
+import { AuthRequest } from '../middleware/auth.middleware';
+
+export const listCourses = async (req: AuthRequest, res: Response) => {
+  try {
+    const isAdmin = ['ADMIN', 'SUPER_ADMIN'].includes(req.user?.role || '');
+    const courses = await prisma.course.findMany({
+      where: isAdmin ? {} : { isPublished: true },
+      include: {
+        modules: {
+          include: {
+            lessons: {
+              include: {
+                progress: { where: { userId: req.user!.id } },
+              },
+              orderBy: { order: 'asc' },
+            },
+          },
+          orderBy: { order: 'asc' },
+        },
+      },
+      orderBy: { order: 'asc' },
+    });
+
+    const result = courses.map((course) => {
+      const totalLessons = course.modules.reduce((acc, m) => acc + m.lessons.length, 0);
+      const completedLessons = course.modules.reduce(
+        (acc, m) => acc + m.lessons.filter((l) => l.progress.some((p) => p.completed)).length,
+        0
+      );
+      const progress = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
+
+      return {
+        id: course.id,
+        title: course.title,
+        description: course.description,
+        thumbnail: course.thumbnail,
+        totalDuration: course.totalDuration,
+        isNew: course.isNew,
+        isPublished: course.isPublished,
+        order: course.order,
+        createdAt: course.createdAt,
+        totalLessons,
+        modulesCount: course.modules.length,
+        progress,
+        modules: course.modules.map((m) => ({
+          id: m.id,
+          title: m.title,
+          description: m.description,
+          order: m.order,
+          lessons: m.lessons.map((l) => ({
+            id: l.id,
+            title: l.title,
+            description: l.description,
+            thumbnail: l.thumbnail,
+            videoUrl: l.videoUrl,
+            duration: l.duration,
+            durationSeconds: l.durationSeconds,
+            order: l.order,
+            completed: l.progress.some((p) => p.completed),
+            progressPct: l.progress[0]?.progressPct || 0,
+          })),
+        })),
+      };
+    });
+
+    return successResponse(res, result);
+  } catch (error) {
+    return errorResponse(res, 'COURSES_ERROR', 'Erro ao listar cursos', 500);
+  }
+};
+
+export const getCourse = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const course = await prisma.course.findUnique({
+      where: { id },
+      include: {
+        modules: {
+          include: {
+            lessons: {
+              include: {
+                progress: { where: { userId: req.user!.id } },
+              },
+              orderBy: { order: 'asc' },
+            },
+          },
+          orderBy: { order: 'asc' },
+        },
+      },
+    });
+
+    if (!course) {
+      return errorResponse(res, 'COURSE_NOT_FOUND', 'Curso nao encontrado', 404);
+    }
+
+    const totalLessons = course.modules.reduce((acc, m) => acc + m.lessons.length, 0);
+    const completedLessons = course.modules.reduce(
+      (acc, m) => acc + m.lessons.filter((l) => l.progress.some((p) => p.completed)).length,
+      0
+    );
+
+    return successResponse(res, {
+      id: course.id,
+      title: course.title,
+      description: course.description,
+      thumbnail: course.thumbnail,
+      totalDuration: course.totalDuration,
+      isNew: course.isNew,
+      totalLessons,
+      progress: totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0,
+      modules: course.modules.map((m) => ({
+        id: m.id,
+        title: m.title,
+        description: m.description,
+        order: m.order,
+        lessons: m.lessons.map((l) => ({
+          id: l.id,
+          title: l.title,
+          description: l.description,
+          videoUrl: l.videoUrl,
+          thumbnail: l.thumbnail,
+          duration: l.duration,
+          durationSeconds: l.durationSeconds,
+          order: l.order,
+          completed: l.progress.some((p) => p.completed),
+          progressPct: l.progress[0]?.progressPct || 0,
+        })),
+      })),
+    });
+  } catch (error) {
+    return errorResponse(res, 'COURSE_ERROR', 'Erro ao buscar curso', 500);
+  }
+};
+
+export const createCourse = async (req: AuthRequest, res: Response) => {
+  try {
+    const { title, description, thumbnail, totalDuration, isPublished, isNew } = req.body;
+
+    const course = await prisma.course.create({
+      data: { title, description, thumbnail, totalDuration, isPublished, isNew },
+    });
+
+    // Notify members about new course (async, don't block response)
+    if (isPublished) {
+      notifyMembers({
+        type: 'NEW_COURSE',
+        title: title,
+        message: description || 'Um novo curso foi adicionado a plataforma. Confira agora\!',
+        link: '/aulas',
+      }).catch(() => {});
+    }
+
+    // Fire webhook
+    fireWebhookEvent('course.created', { id: course.id, title: course.title, isPublished: course.isPublished });
+
+    return successResponse(res, course, undefined, 201);
+  } catch (error) {
+    return errorResponse(res, 'COURSE_CREATE_ERROR', 'Erro ao criar curso', 500);
+  }
+};
+
+export const updateCourse = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { title, description, thumbnail, totalDuration, isPublished, isNew, order } = req.body;
+
+    const course = await prisma.course.update({
+      where: { id },
+      data: { title, description, thumbnail, totalDuration, isPublished, isNew, order },
+    });
+
+    return successResponse(res, course);
+  } catch (error) {
+    return errorResponse(res, 'COURSE_UPDATE_ERROR', 'Erro ao atualizar curso', 500);
+  }
+};
+
+export const deleteCourse = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    await prisma.course.delete({ where: { id } });
+
+    return successResponse(res, { message: 'Curso deletado' });
+  } catch (error) {
+    return errorResponse(res, 'COURSE_DELETE_ERROR', 'Erro ao deletar curso', 500);
+  }
+};
+
+// Modules
+export const createModule = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id: courseId } = req.params;
+    const { title, description, order } = req.body;
+
+    const module = await prisma.module.create({
+      data: { courseId, title, description, order },
+    });
+
+    return successResponse(res, module, undefined, 201);
+  } catch (error) {
+    return errorResponse(res, 'MODULE_CREATE_ERROR', 'Erro ao criar modulo', 500);
+  }
+};
+
+export const updateModule = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { title, description, order } = req.body;
+
+    const module = await prisma.module.update({
+      where: { id },
+      data: { title, description, order },
+    });
+
+    return successResponse(res, module);
+  } catch (error) {
+    return errorResponse(res, 'MODULE_UPDATE_ERROR', 'Erro ao atualizar modulo', 500);
+  }
+};
+
+export const deleteModule = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    await prisma.module.delete({ where: { id } });
+
+    return successResponse(res, { message: 'Modulo deletado' });
+  } catch (error) {
+    return errorResponse(res, 'MODULE_DELETE_ERROR', 'Erro ao deletar modulo', 500);
+  }
+};
+
+// Lessons
+export const createLesson = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id: moduleId } = req.params;
+    const { title, description, videoUrl, thumbnail, duration, durationSeconds, order } = req.body;
+
+    const lesson = await prisma.lesson.create({
+      data: { moduleId, title, description, videoUrl, thumbnail, duration, durationSeconds, order },
+    });
+
+    return successResponse(res, lesson, undefined, 201);
+  } catch (error) {
+    return errorResponse(res, 'LESSON_CREATE_ERROR', 'Erro ao criar aula', 500);
+  }
+};
+
+export const updateLesson = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { title, description, videoUrl, thumbnail, duration, durationSeconds, order } = req.body;
+
+    const lesson = await prisma.lesson.update({
+      where: { id },
+      data: { title, description, videoUrl, thumbnail, duration, durationSeconds, order },
+    });
+
+    return successResponse(res, lesson);
+  } catch (error) {
+    return errorResponse(res, 'LESSON_UPDATE_ERROR', 'Erro ao atualizar aula', 500);
+  }
+};
+
+export const deleteLesson = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    await prisma.lesson.delete({ where: { id } });
+
+    return successResponse(res, { message: 'Aula deletada' });
+  } catch (error) {
+    return errorResponse(res, 'LESSON_DELETE_ERROR', 'Erro ao deletar aula', 500);
+  }
+};
+
+export const updateProgress = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id: lessonId } = req.params;
+    const { completed, progressPct } = req.body;
+    const userId = req.user!.id;
+
+    const progress = await prisma.lessonProgress.upsert({
+      where: { userId_lessonId: { userId, lessonId } },
+      update: {
+        completed,
+        progressPct,
+        completedAt: completed ? new Date() : null,
+      },
+      create: {
+        userId,
+        lessonId,
+        completed,
+        progressPct,
+        completedAt: completed ? new Date() : null,
+      },
+    });
+
+    if (completed) {
+      await prisma.activityLog.create({
+        data: {
+          userId,
+          type: 'LESSON',
+          description: 'Aula concluida',
+          metadata: { lessonId },
+        },
+      });
+
+      // Fire webhook
+      fireWebhookEvent('lesson.completed', { lessonId, userId, progressPct });
+    }
+
+    return successResponse(res, progress);
+  } catch (error) {
+    return errorResponse(res, 'PROGRESS_ERROR', 'Erro ao atualizar progresso', 500);
+  }
+};

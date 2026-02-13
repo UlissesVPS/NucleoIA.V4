@@ -1,0 +1,66 @@
+# ===========================
+# NucleoIA V4 - .gitignore
+# ===========================
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+backend/dist/
+frontend/dist/
+*.tsbuildinfo
+
+# Environment variables (NEVER commit secrets)
+.env
+.env.local
+.env.production
+.env.staging
+backend/.env
+frontend/.env
+
+# Uploads (user media - too large for git)
+backend/uploads/
+uploads/
+
+# Conektai extraction files (large JSON)
+conektai_prompts_*.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Backups (managed separately)
+backups/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Lock files (binary)
+bun.lockb
+
+# Prisma
+backend/prisma/*.js
+backend/prisma/*.js.map
+backend/prisma/*.d.ts
+backend/prisma/*.d.ts.map
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Temp files
+*.tmp
+*.temp
+.cache/
