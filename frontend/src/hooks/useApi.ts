@@ -202,6 +202,16 @@ export const usePrompts = (params?: Record<string, unknown>) =>
     ),
   });
 
+export const usePromptsPaginated = (params?: Record<string, unknown>) =>
+  useQuery({
+    queryKey: ['prompts', 'paginated', params],
+    queryFn: () => api.get('/prompts', { params }).then((r) => ({
+      data: (r.data.data || []).map(mapApiPrompt),
+      meta: r.data.meta || { total: 0, page: 1, limit: 24, totalPages: 1 },
+    })),
+    placeholderData: (prev: any) => prev,
+  });
+
 export const useCommunityPrompts = (params?: Record<string, unknown>) =>
   useQuery({
     queryKey: ['prompts', 'community', params],

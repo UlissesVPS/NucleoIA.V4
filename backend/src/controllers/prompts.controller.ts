@@ -51,6 +51,7 @@ export const listPrompts = async (req: AuthRequest, res: Response) => {
         type: p.type,
         category: p.category.name,
         categoryId: p.categoryId,
+        content: p.content,
         thumbnailUrl: p.thumbnailUrl,
         likes: p.likes,
         author: p.author.name,
