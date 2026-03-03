@@ -56,7 +56,7 @@ export const register = async (req: Request, res: Response) => {
         passwordHash,
         name: name.trim(),
         role: 'MEMBER',
-        isActive: true,
+        isActive: false,
         needsPasswordReset: false,
       },
     });
@@ -66,8 +66,7 @@ export const register = async (req: Request, res: Response) => {
       data: {
         userId: user.id,
         plan: 'MENSAL',
-        status: 'ACTIVE',
-        planTier: 'DIAMANTE',
+        status: 'PENDING',
       },
     });
 
@@ -84,7 +83,7 @@ export const register = async (req: Request, res: Response) => {
     console.log(`[REGISTER] New user registered: ${user.email} (${user.id})`);
 
     return successResponse(res, {
-      message: 'Cadastro realizado com sucesso! Voce ja pode fazer login.',
+      message: 'Cadastro realizado com sucesso! Aguarde a aprovacao do administrador para acessar a plataforma.',
     }, undefined, 201);
   } catch (error) {
     console.error('Register error:', error);
