@@ -9,6 +9,7 @@ import CourseSidebar from "@/components/courses/CourseSidebar";
 import { toast } from "sonner";
 import { useCourse, useUpdateLessonProgress } from "@/hooks/useApi";
 import { getAllLessons, calculateProgress } from "@/utils/courses";
+import RichContentRenderer from "@/components/RichContentRenderer";
 import type { Course, Lesson } from "@/types";
 
 const CourseDetail = () => {
@@ -196,7 +197,7 @@ const CourseDetail = () => {
               )}
             </div>
             {currentLesson.description && (
-              <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">{currentLesson.description}</p>
+              <RichContentRenderer content={currentLesson.description} />
             )}
             {hasNext && (
               <div className="pt-3 sm:pt-4 border-t border-border">

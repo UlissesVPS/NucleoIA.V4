@@ -9,6 +9,7 @@ export interface AuthRequest extends Request {
     email: string;
     role: string;
     plan: string;
+    planTier: string;
   };
 }
 
@@ -36,6 +37,7 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
       email: user.email,
       role: user.role,
       plan: user.subscription?.plan || 'MENSAL',
+      planTier: user.subscription?.planTier || 'DIAMANTE',
     };
 
     next();
@@ -56,4 +58,17 @@ export const superAdminMiddleware = (req: AuthRequest, res: Response, next: Next
     return errorResponse(res, 'AUTH_FORBIDDEN', 'Acesso negado - Super Admin requerido', 403);
   }
   next();
+};
+
+export const planGateMiddleware = (...allowedTiers: string[]) => {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    // Admins always have full access
+    if (req.user && ['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
+      return next();
+    }
+    if (!req.user || !allowedTiers.includes(req.user.planTier)) {
+      return errorResponse(res, 'PLAN_RESTRICTED', 'Funcionalidade nao disponivel no seu plano. Faca upgrade para o Plano Diamante.', 403);
+    }
+    next();
+  };
 };

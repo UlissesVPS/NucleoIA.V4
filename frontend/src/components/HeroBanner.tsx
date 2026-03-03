@@ -6,23 +6,21 @@ import { Link } from "react-router-dom";
 import heroBg from "@/assets/hero-bg-new.jpg";
 import { LiveCounter, AvatarStack } from "@/components/ui/SocialProof";
 import { FloatingAILogos3D } from "@/components/FloatingAILogos3D";
-import { useAITools, usePrompts, useCourses, useSystemStats } from "@/hooks/useApi";
+import { usePublicStats, useSystemStats } from "@/hooks/useApi";
 
 import TutorialChecklistModal from "@/components/TutorialChecklistModal";
 
 export function HeroBanner() {
   const [showTutorial, setShowTutorial] = useState(false);
   
-  // Fetch real counts from API
-  const { data: aiToolsData } = useAITools();
-  const { data: promptsData } = usePrompts();
-  const { data: coursesData } = useCourses();
+  // Fetch real counts from API (public stats for accurate totals)
+  const { data: publicStats } = usePublicStats();
   const { data: stats } = useSystemStats();
 
-  const toolsCount = aiToolsData?.length ?? 0;
-  const coursesCount = coursesData?.length ?? 0;
-  const promptsCount = promptsData?.length ?? 0;
-  const membersCount = stats?.users?.total ?? 0;
+  const toolsCount = publicStats?.totalTools ?? 0;
+  const coursesCount = publicStats?.totalCourses ?? 0;
+  const promptsCount = publicStats?.totalPrompts ?? 0;
+  const membersCount = publicStats?.totalMembers ?? stats?.users?.total ?? 0;
   const onlineCount = stats?.activity?.online ?? 0;
   return (
     <section className="relative min-h-[400px] sm:min-h-[500px] md:min-h-[550px] lg:min-h-[600px] xl:min-h-[700px] flex items-center overflow-hidden rounded-2xl sm:rounded-3xl">
@@ -120,7 +118,7 @@ export function HeroBanner() {
             transition={{ delay: 0.6 }}
             className="flex flex-col xs:flex-row gap-3 sm:gap-4 mb-8 sm:mb-10"
           >
-            <Link to="/comece-aqui" className="w-full xs:w-auto">
+            <Link to="/aulas/00c1c024-cba9-43bb-9dac-dac6b6eda57d" className="w-full xs:w-auto">
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
@@ -152,7 +150,7 @@ export function HeroBanner() {
             className="grid grid-cols-3 gap-3 sm:gap-4 md:gap-6"
           >
             {[
-              { value: toolsCount, label: "Ferramentas", lucideIcon: Zap, gradient: "from-primary to-orange-500" },
+              { value: toolsCount, label: "Ferramentas", lucideIcon: Zap, gradient: "from-orange-400 to-orange-600" },
               { value: coursesCount, label: "Cursos", customIcon: "cursos" },
               { value: promptsCount, label: "Prompts", customIcon: "prompts" },
             ].map((stat, index) => (
@@ -168,8 +166,8 @@ export function HeroBanner() {
                 ) : stat.customIcon === "prompts" ? (
                   <PromptsIcon size="sm" className="mb-1.5 sm:mb-2" />
                 ) : (
-                  <div className={`inline-flex items-center justify-center w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 rounded-lg sm:rounded-xl bg-gradient-to-br ${stat.gradient} shadow-lg shadow-orange-500/25 mb-1.5 sm:mb-2 relative`}>
-                    <div className="absolute inset-0 rounded-lg sm:rounded-xl bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.2),transparent_60%)]" />
+                  <div className="inline-flex items-center justify-center w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 rounded-xl shadow-lg shadow-orange-500/40 mb-1.5 sm:mb-2 relative" style={{ background: "linear-gradient(135deg, #fb923c 0%, #ea580c 100%)" }}>
+                    <div className="absolute inset-0 rounded-xl" style={{ background: "radial-gradient(circle at 30% 20%, rgba(255,255,255,0.3), transparent 50%)" }} />
                     {stat.lucideIcon && <stat.lucideIcon className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6 text-white relative z-10" />}
                   </div>
                 )}

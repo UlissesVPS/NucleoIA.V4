@@ -26,9 +26,9 @@ const tutorialSteps = [
   {
     id: 1,
     title: "Assista as Aulas Introdutórias",
-    description: "Comece pelo módulo 'COMECE AQUI' para entender como a plataforma funciona",
+    description: "Assista o curso ACESSO AS FERRAMENTAS para entender como a plataforma funciona",
     icon: GraduationCap,
-    href: "/comece-aqui",
+    href: "/aulas/00c1c024-cba9-43bb-9dac-dac6b6eda57d",
     gradient: "from-primary to-orange-500",
     priority: true,
     estimatedTime: "15 min"
@@ -269,7 +269,7 @@ const TutorialChecklistModal = ({ open, onOpenChange }: TutorialChecklistModalPr
           <Button
             variant="gradient"
             className="flex-1 gap-2"
-            onClick={() => handleNavigate("/comece-aqui")}
+            onClick={() => handleNavigate("/aulas/00c1c024-cba9-43bb-9dac-dac6b6eda57d")}
           >
             <GraduationCap className="w-4 h-4" />
             Começar Pelas Aulas

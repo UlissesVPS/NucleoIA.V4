@@ -61,6 +61,7 @@ const VideoPlayer = ({
   const [quality, setQuality] = useState("Auto");
   const [isPiP, setIsPiP] = useState(false);
   const [buffered, setBuffered] = useState(0);
+  const [isBuffering, setIsBuffering] = useState(false);
 
   // Format time helper
   const formatTime = (seconds: number) => {
@@ -246,16 +247,26 @@ const VideoPlayer = ({
       }
     };
 
+    const handleWaiting = () => setIsBuffering(true);
+    const handleCanPlay = () => setIsBuffering(false);
+    const handlePlaying = () => { setIsBuffering(false); setIsPlaying(true); };
+
     video.addEventListener("timeupdate", handleTimeUpdate);
     video.addEventListener("loadedmetadata", handleLoadedMetadata);
     video.addEventListener("ended", handleEnded);
     video.addEventListener("progress", handleProgress);
+    video.addEventListener("waiting", handleWaiting);
+    video.addEventListener("canplay", handleCanPlay);
+    video.addEventListener("playing", handlePlaying);
 
     return () => {
       video.removeEventListener("timeupdate", handleTimeUpdate);
       video.removeEventListener("loadedmetadata", handleLoadedMetadata);
       video.removeEventListener("ended", handleEnded);
       video.removeEventListener("progress", handleProgress);
+      video.removeEventListener("waiting", handleWaiting);
+      video.removeEventListener("canplay", handleCanPlay);
+      video.removeEventListener("playing", handlePlaying);
     };
   }, [onEnded, onProgress]);
 
@@ -278,6 +289,8 @@ const VideoPlayer = ({
         ref={videoRef}
         src={src}
         poster={poster}
+        preload="metadata"
+        playsInline
         className="w-full aspect-video cursor-pointer"
         onClick={togglePlay}
       />
@@ -293,13 +306,20 @@ const VideoPlayer = ({
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
 
         {/* Center play button */}
-        {!isPlaying && (
+        {!isPlaying && !isBuffering && (
           <button
             onClick={togglePlay}
             className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-20 w-20 rounded-full bg-primary/90 flex items-center justify-center hover:bg-primary transition-colors"
           >
             <Play className="h-10 w-10 text-primary-foreground ml-1" fill="currentColor" />
           </button>
+        )}
+
+        {/* Buffering spinner */}
+        {isBuffering && (
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
+            <div className="h-12 w-12 border-4 border-white/30 border-t-primary rounded-full animate-spin" />
+          </div>
         )}
 
         {/* Bottom controls */}

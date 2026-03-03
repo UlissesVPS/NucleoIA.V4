@@ -6,6 +6,7 @@ import {
   Crown,
   Shield,
   KeyRound,
+  Users,
   Settings,
   Sparkles,
   PenLine,
@@ -14,9 +15,10 @@ import {
 import type { NavItem } from "@/types";
 
 export const mainNavItems: NavItem[] = [
-  { icon: Sparkles, label: "Comece Aqui", labelKey: "nav.getStarted", href: "/comece-aqui", highlight: true },
+  // [REMOVED] { icon: Sparkles, label: "Comece Aqui", labelKey: "nav.getStarted", href: "/comece-aqui", highlight: true },
   { icon: LayoutDashboard, label: "Dashboard", labelKey: "nav.dashboard", href: "/" },
   { icon: Bot, label: "Lista de IA's", labelKey: "nav.aiList", href: "/ias" },
+  { icon: Users, label: "Agentes", labelKey: "nav.agents", href: "/agentes" },
   { icon: GraduationCap, label: "Aulas", labelKey: "nav.lessons", href: "/aulas" },
   { icon: FileText, label: "Prompts", labelKey: "nav.prompts", href: "/prompts" },
   { icon: PenLine, label: "Meus Prompts", labelKey: "nav.myPrompts", href: "/meus-prompts" },

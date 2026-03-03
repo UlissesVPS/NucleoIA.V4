@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { ProtectedRoute, AdminRoute, SuperAdminRoute } from "@/components/ProtectedRoute";
@@ -25,13 +25,16 @@ import Products from "@/pages/Products";
 import AdminProducts from "@/pages/AdminProducts";
 import Admin from "@/pages/Admin";
 import Sistema from "@/pages/Sistema";
-import GetStarted from "@/pages/GetStarted";
+// [REMOVED] import GetStarted from "@/pages/GetStarted";
 import Profile from "@/pages/Profile";
 import Settings from "@/pages/Settings";
 import Faq from "@/pages/Faq";
 import Networking from "@/pages/Networking";
 import NotFound from "@/pages/NotFound";
 import FirstAccess from "@/pages/FirstAccess";
+import Agents from "@/pages/Agents";
+import ForgotPassword from "@/pages/ForgotPassword";
+import ResetPassword from "@/pages/ResetPassword";
 
 const queryClient = new QueryClient();
 
@@ -49,12 +52,15 @@ const App = () => (
               <Route path="/auth/magic" element={<Login />} />
               <Route path="/primeiro-acesso" element={<FirstAccess />} />
               <Route path="/solicitar-acesso" element={<Signup />} />
+              <Route path="/esqueci-senha" element={<ForgotPassword />} />
+              <Route path="/redefinir-senha" element={<ResetPassword />} />
 
               {/* Protected routes (authenticated users) */}
               <Route element={<ProtectedRoute />}>
                 <Route element={<MainLayout />}>
                   <Route path="/" element={<Dashboard />} />
-                  <Route path="/comece-aqui" element={<GetStarted />} />
+                  {/* [REMOVED] <Route path="/comece-aqui" element={<GetStarted />} /> */}
+                  <Route path="/comece-aqui" element={<Navigate to="/" replace />} />
                   <Route path="/ias" element={<AILibrary />} />
                   <Route path="/autenticador" element={<Authenticator />} />
                   <Route path="/dicloak" element={<Dicloak />} />
@@ -63,6 +69,7 @@ const App = () => (
                   <Route path="/aulas" element={<Courses />} />
                   <Route path="/aulas/:cursoId" element={<CourseDetail />} />
                   <Route path="/produtos" element={<Products />} />
+                  <Route path="/agentes" element={<Agents />} />
                   <Route path="/perfil" element={<Profile />} />
                   <Route path="/configuracoes" element={<Settings />} />
                   <Route path="/faq" element={<Faq />} />

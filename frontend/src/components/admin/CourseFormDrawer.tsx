@@ -7,6 +7,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import RichTextEditor from "@/components/RichTextEditor";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
@@ -158,7 +159,7 @@ function LessonDialog({ open, onClose, moduleId, lesson, nextOrder }: LessonDial
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto bg-card">
+      <DialogContent className="max-w-4xl w-[90vw] max-h-[90vh] overflow-y-auto bg-card p-6">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <PlayCircle className="h-5 w-5 text-primary" />
@@ -176,7 +177,7 @@ function LessonDialog({ open, onClose, moduleId, lesson, nextOrder }: LessonDial
           {/* Description */}
           <div className="space-y-1.5">
             <Label>Descricao</Label>
-            <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Descreva o conteudo desta aula..." rows={2} />
+            <RichTextEditor content={description} onChange={setDescription} placeholder="Descreva o conteudo desta aula..." />
           </div>
 
           {/* ===== VIDEO UPLOAD ===== */}

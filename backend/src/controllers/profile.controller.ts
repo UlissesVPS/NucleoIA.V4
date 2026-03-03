@@ -210,3 +210,42 @@ export const updateAvatar = async (req: AuthRequest, res: Response) => {
     return errorResponse(res, 'AVATAR_ERROR', 'Erro ao atualizar avatar', 500);
   }
 };
+
+
+// First Access Popup
+export const getFirstAccessPopupStatus = async (req: any, res: any) => {
+  try {
+    const userId = req.user.id;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { firstAccessPopupSeen: true, name: true },
+    });
+    if (!user) {
+      return res.status(404).json({ success: false, error: { message: 'Usuario nao encontrado' } });
+    }
+    return res.json({
+      success: true,
+      data: {
+        seen: user.firstAccessPopupSeen,
+        memberName: user.name?.split(' ')[0] || 'Membro',
+      },
+    });
+  } catch (error) {
+    console.error('Error getting first access popup status:', error);
+    return res.status(500).json({ success: false, error: { message: 'Erro interno' } });
+  }
+};
+
+export const dismissFirstAccessPopup = async (req: any, res: any) => {
+  try {
+    const userId = req.user.id;
+    await prisma.user.update({
+      where: { id: userId },
+      data: { firstAccessPopupSeen: true },
+    });
+    return res.json({ success: true, data: { seen: true } });
+  } catch (error) {
+    console.error('Error dismissing first access popup:', error);
+    return res.status(500).json({ success: false, error: { message: 'Erro interno' } });
+  }
+};

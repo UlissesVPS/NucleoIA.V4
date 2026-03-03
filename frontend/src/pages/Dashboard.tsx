@@ -1,11 +1,14 @@
 import { Link, useNavigate } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
+import { useFirstAccessPopupStatus, useDismissFirstAccessPopup } from "@/hooks/useApi";
+import FirstAccessPopup from "@/components/FirstAccessPopup";
 import { GraduationCap, ArrowRight, ArrowUpRight, Play, Sparkles } from "lucide-react";
 import { AIListIcon, PromptHubIcon } from "@/components/DashboardIcons";
 import { Button } from "@/components/ui/button";
 import GlassCard from "@/components/GlassCard";
 import HeroBanner from "@/components/HeroBanner";
 import VIPProductsCarousel from "@/components/products/VIPProductsCarousel";
-import { useAITools, usePrompts, useCourses } from "@/hooks/useApi";
+import { useAITools, usePrompts, useCourses, usePublicStats } from "@/hooks/useApi";
 import { useTranslation } from "@/lib/i18n";
 
 const Dashboard = () => {
@@ -14,10 +17,28 @@ const Dashboard = () => {
   const { data: aiTools } = useAITools();
   const { data: prompts } = usePrompts();
   const { data: courses } = useCourses();
+  const { data: publicStats } = usePublicStats();
 
-  const toolsCount = aiTools?.length ?? 0;
-  const promptsCount = prompts?.length ?? 0;
-  const coursesCount = courses?.length ?? 0;
+  // First Access Popup logic
+  const { user, isAdmin } = useAuth();
+  const { data: popupStatus } = useFirstAccessPopupStatus();
+  const dismissPopup = useDismissFirstAccessPopup();
+  const showFirstAccessPopup = !isAdmin && popupStatus && !popupStatus.seen;
+
+  const handleDismissPopup = () => {
+    dismissPopup.mutate();
+    try { localStorage.setItem('nucleoia_first_access_seen', 'true'); } catch {}
+  };
+
+  const handleGoToLesson = () => {
+    handleDismissPopup();
+    navigate('/aulas/00c1c024-cba9-43bb-9dac-dac6b6eda57d');
+  };
+
+  // Use real totals from public stats API (not paginated array length)
+  const toolsCount = publicStats?.totalTools ?? aiTools?.length ?? 0;
+  const promptsCount = publicStats?.totalPrompts ?? prompts?.length ?? 0;
+  const coursesCount = publicStats?.totalCourses ?? courses?.length ?? 0;
 
   // Course progress data
   const coursesInProgress = (courses || []).filter((c) => c.progress > 0 && c.progress < 100);
@@ -54,11 +75,11 @@ const Dashboard = () => {
       count: coursesCount,
       description: "cursos premium",
       href: "/aulas",
-      gradient: "from-blue-500 to-cyan-500",
+      gradient: "from-blue-400 to-cyan-500",
       hoverBorder: "hover:border-blue-500/40",
       hoverShadow: "hover:shadow-blue-500/10",
       countSuffix: "",
-      color: "from-blue-500 to-cyan-500",
+      color: "from-blue-400 to-cyan-500",
     },
   ];
 
@@ -93,8 +114,8 @@ const Dashboard = () => {
                     ) : item.customIcon === "prompthub" ? (
                       <PromptHubIcon size="md" />
                     ) : (
-                      <div className={`inline-flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-xl bg-gradient-to-br ${item.color} shadow-lg shadow-blue-500/25 relative`}>
-                        <div className="absolute inset-0 rounded-xl bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.2),transparent_60%)]" />
+                      <div className="inline-flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-xl shadow-lg shadow-blue-500/40 relative" style={{ background: "linear-gradient(135deg, #38bdf8 0%, #0284c7 100%)" }}>
+                        <div className="absolute inset-0 rounded-xl" style={{ background: "radial-gradient(circle at 30% 20%, rgba(255,255,255,0.3), transparent 50%)" }} />
                         {item.icon && <item.icon className="h-5 w-5 sm:h-6 sm:w-6 text-white relative z-10" />}
                       </div>
                     )}
@@ -252,6 +273,15 @@ const Dashboard = () => {
 
       {/* VIP Products Carousel */}
       <VIPProductsCarousel />
+
+      {/* First Access Popup */}
+      {showFirstAccessPopup && (
+        <FirstAccessPopup
+          memberName={popupStatus?.memberName || user?.name?.split(" ")[0] || "Membro"}
+          onGoToLesson={handleGoToLesson}
+          onDismiss={handleDismissPopup}
+        />
+      )}
     </div>
   );
 };

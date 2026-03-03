@@ -6,7 +6,8 @@ import {
   listWebhooks, createWebhook, updateWebhook, deleteWebhook, testWebhook,
   getVpsStats, getOnlineUsers, getIpAlerts, getIpHistory,
   listBackups, getBackupSchedule, updateBackupSchedule,
-  getPublicStats
+  getPublicStats,
+  adminGenerateResetLink
 } from '../controllers/system.controller';
 import { authMiddleware, superAdminMiddleware } from '../middleware/auth.middleware';
 
@@ -44,5 +45,8 @@ router.put('/backups/schedule', updateBackupSchedule);
 
 // Notifications
 router.post("/notifications/send", sendNotification);
+
+// Admin: Manual password reset
+router.post("/admin/reset-password", adminGenerateResetLink);
 
 export default router;

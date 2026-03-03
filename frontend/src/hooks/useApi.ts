@@ -187,11 +187,15 @@ export const useDeleteAITool = () => {
 const mapApiPrompt = (p: any) => ({
   ...p,
   id: p.id,
-  thumbnail: p.thumbnailUrl || p.thumbnail || '',
-  promptText: p.content || p.promptText || '',
-  createdAt: p.createdAt ? new Date(p.createdAt).toLocaleDateString('pt-BR') : '',
+  type: (p.type || "image").toLowerCase(),
+  thumbnail: p.thumbnailUrl || p.thumbnail || "",
+  promptText: p.content || p.promptText || "",
+  mediaUrl: p.mediaUrl || null,
+  createdAt: p.createdAt ? new Date(p.createdAt).toLocaleDateString("pt-BR") : "",
   likes: p.likesCount || p.likes || 0,
-  author: p.author?.name || p.author || 'Nucleo IA',
+  author: p.author?.name || p.author || "Nucleo IA",
+  liked: !!p.liked,
+  favorited: !!p.favorited,
 });
 
 export const usePrompts = (params?: Record<string, unknown>) =>
@@ -230,6 +234,30 @@ export const useMyPrompts = (params?: Record<string, unknown>) =>
       ),
   });
 
+export const useUpdateMyPrompt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string } & Record<string, unknown>) =>
+      api.put(`/prompts/my/${id}`, data).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['my-prompts'] });
+      qc.invalidateQueries({ queryKey: ['prompts'] });
+    },
+  });
+};
+
+export const useDeleteMyPrompt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.delete(`/prompts/my/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['my-prompts'] });
+      qc.invalidateQueries({ queryKey: ['prompts'] });
+    },
+  });
+};
+
 export const useCreatePrompt = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -257,14 +285,60 @@ export const useDeletePrompt = () => {
   });
 };
 
+export const useBulkDeletePrompts = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) =>
+      api.delete('/prompts/bulk-delete', { data: { ids } }).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['prompts'] });
+      qc.invalidateQueries({ queryKey: ['favorites'] });
+      qc.invalidateQueries({ queryKey: ['most-liked'] });
+    },
+  });
+};
+
 export const useLikePrompt = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
       api.post(`/prompts/${id}/like`).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['prompts'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['prompts'] });
+      qc.invalidateQueries({ queryKey: ['most-liked'] });
+      qc.invalidateQueries({ queryKey: ['favorites'] });
+    },
   });
 };
+
+export const useFavoritePrompt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post(`/prompts/${id}/favorite`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['prompts'] });
+      qc.invalidateQueries({ queryKey: ['favorites'] });
+      qc.invalidateQueries({ queryKey: ['most-liked'] });
+    },
+  });
+};
+
+export const useFavorites = (params?: Record<string, unknown>) =>
+  useQuery({
+    queryKey: ['favorites', params],
+    queryFn: () => api.get('/prompts/favorites', { params }).then((r) =>
+      (r.data.data || []).map(mapApiPrompt)
+    ),
+  });
+
+export const useMostLiked = (params?: Record<string, unknown>) =>
+  useQuery({
+    queryKey: ['most-liked', params],
+    queryFn: () => api.get('/prompts/most-liked', { params }).then((r) =>
+      (r.data.data || []).map(mapApiPrompt)
+    ),
+  });
 
 export const useCopyPrompt = () =>
   useMutation({
@@ -430,12 +504,59 @@ export const useUploadVideo = () =>
     mutationFn: (file: File) => {
       const formData = new FormData();
       formData.append('file', file);
-      return api.post('/upload/video', formData, {
+      return api.post('/upload/member/video', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 600000,
       }).then((r) => r.data.data);
     },
   });
+// Member upload hooks (no admin required)
+export const useMemberUploadImage = () =>
+  useMutation({
+    mutationFn: (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      return api.post('/upload/member/image', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      }).then((r) => r.data.data);
+    },
+  });
+
+export const useMemberUploadThumbnail = () =>
+  useMutation({
+    mutationFn: (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      return api.post('/upload/member/thumbnail', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      }).then((r) => r.data.data);
+    },
+  });
+
+export const useMemberUploadVideo = () =>
+  useMutation({
+    mutationFn: (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      return api.post('/upload/member/video', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 600000,
+      }).then((r) => r.data.data);
+    },
+  });
+
+// Toggle prompt public/private
+export const useTogglePromptPublic = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.patch(`/prompts/${id}/toggle-public`).then((r) => r.data.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['my-prompts'] });
+      qc.invalidateQueries({ queryKey: ['prompts'] });
+    },
+  });
+};
 
 // Products
 const PRODUCT_CAT_API_TO_UI: Record<string, string> = {
@@ -743,10 +864,63 @@ export const useSetTotpSecret = () => {
   });
 };
 
-export const useTotpCurrentCode = (toolName = 'Dicloak', enabled = false) =>
+
+
+// ============================================
+// First Access Popup
+// ============================================
+export const useFirstAccessPopupStatus = () =>
   useQuery({
-    queryKey: ['totp', 'code', toolName],
-    queryFn: () => api.get('/totp/code', { params: { toolName } }).then((r) => r.data.data),
-    enabled,
-    refetchInterval: enabled ? 25000 : false,
+    queryKey: ['first-access-popup'],
+    queryFn: () => api.get('/profile/first-access-popup').then((r) => r.data.data),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
   });
+
+export const useDismissFirstAccessPopup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.put('/profile/first-access-popup/dismiss').then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['first-access-popup'] });
+    },
+  });
+};
+
+
+// ============================================
+// Agents
+// ============================================
+export const useAgents = (params?: Record<string, unknown>) =>
+  useQuery({
+    queryKey: ['agents', params],
+    queryFn: () => api.get('/agents', { params }).then((r) => r.data.data),
+  });
+
+export const useCreateAgent = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>) =>
+      api.post('/agents', data).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
+  });
+};
+
+export const useUpdateAgent = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string; [key: string]: unknown }) =>
+      api.put(`/agents/${id}`, data).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
+  });
+};
+
+export const useDeleteAgent = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.delete(`/agents/${id}`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] }),
+  });
+};

@@ -6,6 +6,7 @@ import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '.
 import { successResponse, errorResponse } from '../utils/response';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { env } from '../config/env';
+import { sendEmail } from '../services/email.service';
 
 // ==================== REGISTER (PUBLIC) ====================
 export const register = async (req: Request, res: Response) => {
@@ -55,7 +56,7 @@ export const register = async (req: Request, res: Response) => {
         passwordHash,
         name: name.trim(),
         role: 'MEMBER',
-        isActive: false,
+        isActive: true,
         needsPasswordReset: false,
       },
     });
@@ -65,7 +66,8 @@ export const register = async (req: Request, res: Response) => {
       data: {
         userId: user.id,
         plan: 'MENSAL',
-        status: 'PENDING',
+        status: 'ACTIVE',
+        planTier: 'DIAMANTE',
       },
     });
 
@@ -74,7 +76,7 @@ export const register = async (req: Request, res: Response) => {
       data: {
         userId: user.id,
         type: 'SYSTEM',
-        description: 'Cadastro pendente de aprovacao (registro manual)',
+        description: 'Cadastro realizado com sucesso',
         ipAddress: req.ip,
       },
     });
@@ -82,7 +84,7 @@ export const register = async (req: Request, res: Response) => {
     console.log(`[REGISTER] New user registered: ${user.email} (${user.id})`);
 
     return successResponse(res, {
-      message: 'Cadastro enviado com sucesso! Aguarde a aprovacao do administrador.',
+      message: 'Cadastro realizado com sucesso! Voce ja pode fazer login.',
     }, undefined, 201);
   } catch (error) {
     console.error('Register error:', error);
@@ -118,8 +120,8 @@ export const setFirstPassword = async (req: Request, res: Response) => {
     const { token } = req.params;
     const { password } = req.body;
 
-    if (!password || password.length < 8) {
-      return errorResponse(res, 'INVALID_PASSWORD', 'A senha deve ter no minimo 8 caracteres', 400);
+    if (!password || password.length < 6) {
+      return errorResponse(res, 'INVALID_PASSWORD', 'A senha deve ter no minimo 6 caracteres', 400);
     }
 
     const user = await prisma.user.findFirst({
@@ -179,10 +181,32 @@ export const login = async (req: Request, res: Response) => {
     }
 
     if (!user.isActive) {
-      if (user.subscription?.status === 'PENDING') {
+      // Auto-activate if user has a valid (non-expired) subscription
+      const hasValidSubscription = user.subscription &&
+        user.subscription.expiresAt &&
+        new Date(user.subscription.expiresAt) > new Date();
+
+      if (hasValidSubscription) {
+        // Auto-activate the user - they have a valid subscription
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { isActive: true },
+        });
+        await prisma.activityLog.create({
+          data: {
+            userId: user.id,
+            type: 'SYSTEM',
+            description: 'Conta auto-ativada no login (assinatura valida detectada)',
+            ipAddress: req.ip,
+          },
+        });
+        console.log(`[LOGIN] Auto-activated user: ${user.email} (valid subscription until ${user.subscription!.expiresAt})`);
+        // Continue with login - don't return error
+      } else if (user.subscription?.status === 'PENDING') {
         return errorResponse(res, 'AUTH_PENDING_APPROVAL', 'Seu cadastro esta aguardando aprovacao do administrador.', 403);
+      } else {
+        return errorResponse(res, 'AUTH_USER_INACTIVE', 'Sua conta esta inativa. Entre em contato com o suporte.', 401);
       }
-      return errorResponse(res, 'AUTH_USER_INACTIVE', 'Sua conta foi desativada. Entre em contato com o suporte.', 401);
     }
 
     // Handle migrated users with no real password (MAGIC_LINK_USER)
@@ -328,6 +352,7 @@ export const me = async (req: AuthRequest, res: Response) => {
       role: user.role,
       avatarUrl: user.avatarUrl,
       plan: user.subscription?.plan || 'MENSAL',
+      planTier: user.subscription?.planTier || 'DIAMANTE',
       subscriptionStatus: user.subscription?.status || 'INACTIVE',
       needsPasswordReset: user.needsPasswordReset,
       language: user.language || 'pt-BR',
@@ -377,5 +402,178 @@ export const refresh = async (req: Request, res: Response) => {
     return successResponse(res, { accessToken });
   } catch (error) {
     return errorResponse(res, 'AUTH_REFRESH_ERROR', 'Erro ao renovar token', 401);
+  }
+};
+
+// ==================== FORGOT PASSWORD (PUBLIC) ====================
+export const forgotPassword = async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+    if (!email || !email.trim()) {
+      return errorResponse(res, 'MISSING_EMAIL', 'O email e obrigatorio', 400);
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: email.trim().toLowerCase() },
+      include: { subscription: true },
+    });
+
+    // Security: always return success to avoid email enumeration
+    if (!user) {
+      console.log(`[FORGOT_PASSWORD] Attempt for non-existent email: ${email.trim().toLowerCase()}`);
+      return successResponse(res, { message: 'Se o email estiver cadastrado, voce recebera um link de recuperacao.' });
+    }
+
+    // Generate secure token
+    const token = uuidv4();
+    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordResetToken: token,
+        passwordResetExpires: expires,
+      },
+    });
+
+    // Send email
+    const resetUrl = `https://painel.nucleoia.online/redefinir-senha?token=${token}`;
+    const emailResult = await sendEmail({
+      to: user.email,
+      subject: 'Recuperacao de Senha - Nucleo IA',
+      html: `
+        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; background: #1a1a2e; padding: 40px 30px; border-radius: 16px;">
+          <div style="text-align: center; margin-bottom: 30px;">
+            <h1 style="color: #F97316; font-size: 28px; margin: 0;">NUCLEO IA</h1>
+            <p style="color: #94a3b8; font-size: 14px; margin-top: 8px;">Recuperacao de Senha</p>
+          </div>
+          <div style="background: #16213e; border-radius: 12px; padding: 30px; border: 1px solid #2a2a4a;">
+            <p style="color: #e2e8f0; font-size: 16px; margin: 0 0 10px;">
+              Ola, <strong>${user.name?.split(' ')[0] || 'Membro'}</strong>!
+            </p>
+            <p style="color: #94a3b8; font-size: 14px; line-height: 1.6; margin: 0 0 24px;">
+              Recebemos uma solicitacao para redefinir a senha da sua conta.
+              Clique no botao abaixo para criar uma nova senha:
+            </p>
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${resetUrl}"
+                 style="display: inline-block; background: linear-gradient(135deg, #F97316, #ea580c); color: white; padding: 14px 40px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 16px;">
+                Redefinir Minha Senha
+              </a>
+            </div>
+            <p style="color: #64748b; font-size: 13px; line-height: 1.5; margin: 24px 0 0;">
+              Este link expira em <strong style="color: #94a3b8;">1 hora</strong>.
+              Se voce nao solicitou essa alteracao, ignore este email.
+            </p>
+            <hr style="border: none; border-top: 1px solid #2a2a4a; margin: 24px 0;" />
+            <p style="color: #475569; font-size: 12px; margin: 0;">
+              Se o botao nao funcionar, copie e cole este link no navegador:<br/>
+              <a href="${resetUrl}" style="color: #F97316; word-break: break-all;">${resetUrl}</a>
+            </p>
+          </div>
+          <p style="text-align: center; color: #475569; font-size: 12px; margin-top: 24px;">
+            &copy; ${new Date().getFullYear()} Nucleo IA. Todos os direitos reservados.
+          </p>
+        </div>
+      `,
+    });
+
+    if (!emailResult.success) {
+      console.error(`[FORGOT_PASSWORD] Email send FAILED for: ${user.email} | Error: ${emailResult.error}`);
+      // Limpar token se email falhou (evita token orfao)
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { passwordResetToken: null, passwordResetExpires: null },
+      });
+      return errorResponse(res, 'EMAIL_SEND_FAILED', 'Nao foi possivel enviar o email de recuperacao. Tente novamente em alguns minutos ou entre em contato com o suporte.', 503);
+    }
+
+    await prisma.activityLog.create({
+      data: {
+        userId: user.id,
+        type: 'SYSTEM',
+        description: `Recuperacao de senha solicitada (email: ${emailResult.messageId || 'sent'})`,
+        ipAddress: req.ip,
+      },
+    });
+
+    console.log(`[FORGOT_PASSWORD] Reset email sent to: ${user.email} | MessageId: ${emailResult.messageId}`);
+    return successResponse(res, { message: 'Email de recuperacao enviado! Verifique sua caixa de entrada e a pasta de spam.' });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    return errorResponse(res, 'FORGOT_PASSWORD_ERROR', 'Erro ao processar solicitacao. Tente novamente.', 500);
+  }
+};
+
+// ==================== VALIDATE RESET TOKEN (PUBLIC) ====================
+export const validateResetToken = async (req: Request, res: Response) => {
+  try {
+    const { token } = req.params;
+
+    const user = await prisma.user.findFirst({
+      where: {
+        passwordResetToken: token,
+        passwordResetExpires: { gt: new Date() },
+      },
+    });
+
+    if (!user) {
+      return errorResponse(res, 'INVALID_TOKEN', 'Link invalido ou expirado.', 400);
+    }
+
+    return successResponse(res, { valid: true, email: user.email });
+  } catch (error) {
+    console.error('Validate reset token error:', error);
+    return errorResponse(res, 'SERVER_ERROR', 'Erro interno', 500);
+  }
+};
+
+// ==================== RESET PASSWORD (PUBLIC) ====================
+export const resetPassword = async (req: Request, res: Response) => {
+  try {
+    const { token } = req.params;
+    const { password } = req.body;
+
+    if (!password || password.length < 6) {
+      return errorResponse(res, 'INVALID_PASSWORD', 'A senha deve ter no minimo 6 caracteres', 400);
+    }
+
+    const user = await prisma.user.findFirst({
+      where: {
+        passwordResetToken: token,
+        passwordResetExpires: { gt: new Date() },
+      },
+    });
+
+    if (!user) {
+      return errorResponse(res, 'INVALID_TOKEN', 'Link invalido ou expirado. Solicite uma nova recuperacao.', 400);
+    }
+
+    const newPasswordHash = await hashPassword(password);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: newPasswordHash,
+        passwordResetToken: null,
+        passwordResetExpires: null,
+        needsPasswordReset: false,
+      },
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        userId: user.id,
+        type: 'SYSTEM',
+        description: 'Senha redefinida com sucesso via recuperacao',
+        ipAddress: req.ip,
+      },
+    });
+
+    console.log(`[RESET_PASSWORD] Password reset for: ${user.email}`);
+    return successResponse(res, { message: 'Senha redefinida com sucesso!' });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    return errorResponse(res, 'RESET_PASSWORD_ERROR', 'Erro ao redefinir senha. Tente novamente.', 500);
   }
 };

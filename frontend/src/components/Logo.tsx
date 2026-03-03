@@ -1,4 +1,3 @@
-import { Brain } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface LogoProps {
@@ -8,21 +7,24 @@ interface LogoProps {
 }
 
 const sizeMap = {
-  sm: { icon: 20, text: "text-lg" },
-  md: { icon: 28, text: "text-xl" },
-  lg: { icon: 36, text: "text-2xl" },
-  xl: { icon: 48, text: "text-4xl" },
+  sm: { img: 20, imgSrc: "/sidebar-logo.png", text: "text-lg" },
+  md: { img: 28, imgSrc: "/logo.png", text: "text-xl" },
+  lg: { img: 36, imgSrc: "/logo.png", text: "text-2xl" },
+  xl: { img: 48, imgSrc: "/logo.png", text: "text-4xl" },
 };
 
 const Logo = ({ size = "md", showText = true, className }: LogoProps) => {
-  const { icon, text } = sizeMap[size];
+  const { img, imgSrc, text } = sizeMap[size];
 
   return (
     <div className={cn("flex items-center gap-2", className)}>
-      <div className="relative">
-        <Brain className="text-primary" size={icon} />
-        <div className="absolute inset-0 blur-lg bg-primary/30 rounded-full" />
-      </div>
+      <img
+        src={imgSrc}
+        alt="Nucleo IA"
+        width={img}
+        height={img}
+        className="object-contain"
+      />
       {showText && (
         <span className={cn("font-bold text-gradient", text)}>
           NÚCLEO IA

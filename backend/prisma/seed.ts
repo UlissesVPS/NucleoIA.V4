@@ -6,32 +6,10 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('Seeding database...');
 
-  // Create super admin
-  const passwordHash = await bcrypt.hash('Admin@123', 12);
-
-  const admin = await prisma.user.upsert({
-    where: { email: 'admin@nucleoia.com' },
-    update: {},
-    create: {
-      email: 'admin@nucleoia.com',
-      passwordHash,
-      name: 'Super Admin',
-      role: 'SUPER_ADMIN',
-      isActive: true,
-    },
-  });
-
-  await prisma.subscription.upsert({
-    where: { userId: admin.id },
-    update: {},
-    create: {
-      userId: admin.id,
-      plan: 'PREMIUM',
-      status: 'ACTIVE',
-    },
-  });
-
-  console.log('Super admin created: admin@nucleoia.com / Admin@123');
+  // [SECURITY] Admin creation removed from seed.
+  // The only SUPER_ADMIN is castroweverton001@gmail.com (managed directly in production DB).
+  // DO NOT create admin users via seed in production.
+  console.log('Seed: admin creation skipped (security)');
 
   // Create categories
   const categories = [

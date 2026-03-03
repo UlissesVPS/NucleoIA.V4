@@ -107,9 +107,12 @@ const Login = () => {
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">
-                Senha
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-foreground">Senha</label>
+                <Link to="/esqueci-senha" className="text-xs text-primary hover:text-primary/80 transition-colors">
+                  Esqueceu sua senha?
+                </Link>
+              </div>
               <div className="relative">
                 <InputWithIcon
                   icon={Lock}

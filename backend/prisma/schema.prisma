@@ -19,6 +19,11 @@ enum Plan {
   SEMESTRAL
 }
 
+enum PlanTier {
+  PRO
+  DIAMANTE
+}
+
 enum SubscriptionStatus {
   ACTIVE
   INACTIVE
@@ -103,7 +108,11 @@ model User {
   needsPasswordReset  Boolean   @default(false) @map("needs_password_reset")
   firstAccessToken    String?   @unique @map("first_access_token")
   firstAccessExpires  DateTime? @map("first_access_expires")
+  passwordResetToken  String?   @unique @map("password_reset_token")
+  passwordResetExpires DateTime? @map("password_reset_expires")
+  approvalEmailSent   Boolean   @default(false) @map("approval_email_sent")
   greennClientId      String?   @map("greenn_client_id")
+  firstAccessPopupSeen Boolean   @default(false) @map("first_access_popup_seen")
 
   // Preferências do usuário
   language        String    @default("pt-BR")
@@ -127,6 +136,7 @@ model User {
   sessions       Session[]
   totpCodes      TotpCode[]
   promptLikes    PromptLike[]
+  promptFavorites PromptFavorite[]
   authoredPrompts Prompt[]      @relation("AuthoredPrompts")
   lessonProgress LessonProgress[]
   activityLogs   ActivityLog[]
@@ -139,6 +149,7 @@ model Subscription {
   id              String             @id @default(uuid())
   userId          String             @unique @map("user_id")
   plan            Plan               @default(MENSAL)
+  planTier        PlanTier           @default(DIAMANTE) @map("plan_tier")
   status          SubscriptionStatus @default(ACTIVE)
   startedAt       DateTime           @default(now()) @map("started_at")
   expiresAt       DateTime?          @map("expires_at")
@@ -204,6 +215,7 @@ model Prompt {
   category    Category     @relation(fields: [categoryId], references: [id])
   author      User         @relation("AuthoredPrompts", fields: [authorId], references: [id])
   promptLikes PromptLike[]
+  promptFavorites PromptFavorite[]
 
   @@map("prompts")
 }
@@ -219,6 +231,19 @@ model PromptLike {
 
   @@unique([userId, promptId])
   @@map("prompt_likes")
+}
+
+model PromptFavorite {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  promptId  String   @map("prompt_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prompt Prompt @relation(fields: [promptId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, promptId])
+  @@map("prompt_favorites")
 }
 
 model AiTool {
@@ -467,4 +492,69 @@ model PageSettings {
   updatedAt           DateTime @updatedAt @map("updated_at")
 
   @@map("page_settings")
+}
+
+
+model Agent {
+  id          String   @id @default(uuid())
+  name        String
+  description String
+  imageUrl    String?  @map("image_url")
+  category    String   @default("GERAL")
+  externalUrl String   @default("") @map("external_url")
+  badge       String?
+  isActive    Boolean  @default(true) @map("is_active")
+  order       Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("agents")
+}
+
+
+// ==========================================
+// PROMPT HUB - Modelos separados
+// ==========================================
+
+model PromptHubUser {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String   @map("password_hash")
+  name          String
+  avatarUrl     String?  @map("avatar_url")
+  isActive      Boolean  @default(true) @map("is_active")
+  paidAt        DateTime? @map("paid_at")
+
+  // Preferencias
+  language      String   @default("pt-BR")
+  theme         String   @default("dark")
+
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  myPrompts     PromptHubMyPrompt[]
+
+  @@map("prompt_hub_users")
+}
+
+model PromptHubMyPrompt {
+  id           String     @id @default(uuid())
+  userId       String     @map("user_id")
+  title        String
+  type         PromptType
+  category     String     @default("GERAL")
+  content      String
+  description  String?
+  thumbnailUrl String?    @map("thumbnail_url")
+  mediaUrl     String?    @map("media_url")
+  tags         String[]
+  likes        Int        @default(0)
+  isPublic     Boolean    @default(false) @map("is_public")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  author       PromptHubUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("prompt_hub_my_prompts")
 }

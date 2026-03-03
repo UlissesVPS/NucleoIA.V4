@@ -7,12 +7,13 @@ import { useAuth } from "@/contexts/AuthContext";
 import { AdminToggle } from "@/components/admin";
 import { useSidebar } from "@/contexts/SidebarContext";
 import { useTranslation } from "@/lib/i18n";
+import { usePlanAccess } from "@/hooks/usePlanAccess";
 
-// Navigation groups for visual separation
-const navGroups = [
-  { items: [0, 1] }, // Comece Aqui, Dashboard
-  { items: [2, 3, 4, 5] }, // Lista de IA's, Aulas, Prompts, Meus Prompts
-  { items: [6, 7, 8] }, // Produtos VIPs, Acesso Dicloak, Autenticador 2FA
+// Navigation groups for visual separation (filtered by plan access in component)
+const baseNavGroups = [
+  { items: [0, 1, 2] }, // Dashboard, Lista de IA's, Agentes
+  { items: [3, 4, 5, 6] }, // Aulas, Prompts, Meus Prompts, Produtos VIPs
+  { items: [7, 8] }, // Acesso Dicloak, Autenticador 2FA
 ];
 
 const AppSidebar = () => {
@@ -20,6 +21,17 @@ const AppSidebar = () => {
   const { t } = useTranslation();
   const location = useLocation();
   const { isAdmin, user, viewMode, logout } = useAuth();
+  const { canAccessAgents, canAccessPrompts } = usePlanAccess();
+
+  // Filter nav items based on plan tier
+  const navGroups = baseNavGroups.map(group => ({
+    items: group.items.filter(idx => {
+      if (idx === 2 && !canAccessAgents) return false; // Agentes
+      if (idx === 4 && !canAccessPrompts) return false; // Prompts
+      if (idx === 5 && !canAccessPrompts) return false; // Meus Prompts
+      return true;
+    }),
+  })).filter(group => group.items.length > 0);
   const realIsSuperAdmin = user?.role === 'SUPER_ADMIN';
 
   const isActive = (href: string) => {

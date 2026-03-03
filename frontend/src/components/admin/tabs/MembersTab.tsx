@@ -16,6 +16,7 @@ import {
   CalendarDays,
   AlertCircle,
   ShieldOff,
+  Crown,
 } from "lucide-react";
 import GlassCard from "@/components/GlassCard";
 import Badge from "@/components/Badge";
@@ -74,6 +75,7 @@ interface MemberUser {
   avatarUrl: string | null;
   isActive: boolean;
   plan: string;
+  planTier?: string;
   subscriptionStatus: string;
   realSubscriptionStatus: string;
   subscriptionExpiresAt: string | null;
@@ -159,15 +161,20 @@ const MembersTab = () => {
     if (!confirmAction) return;
     const { user, action } = confirmAction;
     try {
-      await updateStatus.mutateAsync({
+      const result = await updateStatus.mutateAsync({
         id: user.id,
         isActive: action === "reactivate",
       });
-      toast.success(
-        action === "suspend"
-          ? `${user.name} foi suspenso`
-          : `${user.name} foi reativado`
-      );
+      if (action === "suspend") {
+        toast.success(`${user.name} foi suspenso`);
+      } else {
+        const emailSent = (result as any)?.data?.emailSent;
+        if (emailSent) {
+          toast.success(`Acesso de ${user.name} aprovado! Email de boas-vindas enviado.`);
+        } else {
+          toast.warning(`${user.name} foi aprovado, mas o email de notificacao falhou. Notifique manualmente.`);
+        }
+      }
     } catch {
       toast.error("Erro ao alterar status do membro");
     } finally {
@@ -175,7 +182,7 @@ const MembersTab = () => {
     }
   };
 
-  // Change plan
+  // Change plan (billing period)
   const handleChangePlan = async (user: MemberUser, newPlan: string) => {
     if (newPlan === user.plan) return;
     try {
@@ -183,6 +190,17 @@ const MembersTab = () => {
       toast.success(`Plano de ${user.name} alterado para ${newPlan}`);
     } catch {
       toast.error("Erro ao alterar plano");
+    }
+  };
+
+  // Change plan tier (PRO / DIAMANTE)
+  const handleChangePlanTier = async (user: MemberUser, newTier: string) => {
+    if (newTier === (user.planTier || 'DIAMANTE')) return;
+    try {
+      await updateSubscription.mutateAsync({ id: user.id, planTier: newTier });
+      toast.success(`Nivel de ${user.name} alterado para ${newTier}`);
+    } catch {
+      toast.error("Erro ao alterar nivel do plano");
     }
   };
 
@@ -238,8 +256,8 @@ const MembersTab = () => {
         return <Badge variant="danger">Cancelado</Badge>;
       case 'INATIVO':
         return <Badge variant="warning">Inativo</Badge>;
-      case 'PENDENTE':
-        return <Badge variant="warning">Pendente</Badge>;
+      case 'SOLICITADO':
+        return <Badge className="bg-orange-500/20 text-orange-400 border-orange-500/30">Solicitado</Badge>;
       case 'SEM_ASSINATURA':
       default:
         return <Badge variant="default">Sem Assinatura</Badge>;
@@ -391,6 +409,7 @@ const MembersTab = () => {
                 <TableHead>Status</TableHead>
                 <TableHead>Expiracao</TableHead>
                 <TableHead>Plano</TableHead>
+                <TableHead>Nivel</TableHead>
                 <TableHead>Cadastrado em</TableHead>
                 <TableHead className="text-right">Acoes</TableHead>
               </TableRow>
@@ -399,7 +418,7 @@ const MembersTab = () => {
               {filteredUsers.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={7}
+                    colSpan={8}
                     className="text-center py-10 text-muted-foreground"
                   >
                     {searchQuery
@@ -498,6 +517,25 @@ const MembersTab = () => {
                       </Select>
                     </TableCell>
 
+                    {/* Nivel do Plano */}
+                    <TableCell>
+                      <Select
+                        value={user.planTier || 'DIAMANTE'}
+                        onValueChange={(val) => handleChangePlanTier(user, val)}
+                      >
+                        <SelectTrigger className="h-8 w-[120px]">
+                          <div className="flex items-center gap-1.5">
+                            <Crown className="h-3.5 w-3.5 text-amber-500" />
+                            <SelectValue />
+                          </div>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="DIAMANTE">Diamante</SelectItem>
+                          <SelectItem value="PRO">PRO</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+
                     {/* Cadastrado em */}
                     <TableCell>
                       <span className="text-sm text-muted-foreground">
@@ -548,10 +586,10 @@ const MembersTab = () => {
                                 }
                               >
                                 <UserCheck className="h-3.5 w-3.5 mr-1" />
-                                Reativar
+                                {user.realSubscriptionStatus === "SOLICITADO" ? "Aprovar" : "Reativar"}
                               </Button>
                             </TooltipTrigger>
-                            <TooltipContent>Reativar membro</TooltipContent>
+                            <TooltipContent>{user.realSubscriptionStatus === "SOLICITADO" ? "Aprovar cadastro" : "Reativar membro"}</TooltipContent>
                           </Tooltip>
                         )}
 
@@ -623,12 +661,16 @@ const MembersTab = () => {
               <DialogTitle>
                 {confirmAction?.action === "suspend"
                   ? "Suspender Membro"
-                  : "Reativar Membro"}
+                  : confirmAction?.user.realSubscriptionStatus === "SOLICITADO"
+                    ? "Aprovar Cadastro"
+                    : "Reativar Membro"}
               </DialogTitle>
               <DialogDescription>
                 {confirmAction?.action === "suspend"
                   ? `Tem certeza que deseja suspender ${confirmAction?.user.name}? O membro perdera acesso a plataforma.`
-                  : `Deseja reativar o acesso de ${confirmAction?.user.name}?`}
+                  : confirmAction?.user.realSubscriptionStatus === "SOLICITADO"
+                    ? `Deseja aprovar o cadastro de ${confirmAction?.user.name}? O membro tera acesso a plataforma.`
+                    : `Deseja reativar o acesso de ${confirmAction?.user.name}?`}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
@@ -652,7 +694,9 @@ const MembersTab = () => {
                 )}
                 {confirmAction?.action === "suspend"
                   ? "Suspender"
-                  : "Reativar"}
+                  : confirmAction?.user.realSubscriptionStatus === "SOLICITADO"
+                    ? "Aprovar"
+                    : "Reativar"}
               </Button>
             </DialogFooter>
           </DialogContent>

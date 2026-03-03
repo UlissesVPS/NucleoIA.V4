@@ -17,7 +17,7 @@ export const listPrompts = async (req: AuthRequest, res: Response) => {
     const category = req.query.category as string;
     const search = req.query.search as string;
 
-    const where: any = { isCommunity: false };
+    const where: any = {};
 
     if (type) where.type = type;
     if (category) where.categoryId = category;
@@ -35,10 +35,11 @@ export const listPrompts = async (req: AuthRequest, res: Response) => {
           category: true,
           author: { select: { id: true, name: true } },
           promptLikes: { where: { userId: req.user!.id } },
+          promptFavorites: { where: { userId: req.user!.id } },
         },
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ isCommunity: 'desc' }, { createdAt: 'desc' }],
       }),
       prisma.prompt.count({ where }),
     ]);
@@ -53,12 +54,15 @@ export const listPrompts = async (req: AuthRequest, res: Response) => {
         categoryId: p.categoryId,
         content: p.content,
         thumbnailUrl: p.thumbnailUrl,
+        mediaUrl: p.mediaUrl,
         likes: p.likes,
         author: p.author.name,
         createdAt: p.createdAt,
         description: p.description,
         tags: p.tags,
         liked: p.promptLikes.length > 0,
+        favorited: p.promptFavorites.length > 0,
+        isCommunity: p.isCommunity,
       })),
       { total, page, limit, totalPages: Math.ceil(total / limit) }
     );
@@ -77,6 +81,7 @@ export const getPrompt = async (req: AuthRequest, res: Response) => {
         category: true,
         author: { select: { id: true, name: true } },
         promptLikes: { where: { userId: req.user!.id } },
+        promptFavorites: { where: { userId: req.user!.id } },
       },
     });
 
@@ -100,6 +105,7 @@ export const getPrompt = async (req: AuthRequest, res: Response) => {
       authorId: prompt.authorId,
       createdAt: prompt.createdAt,
       liked: prompt.promptLikes.length > 0,
+      favorited: prompt.promptFavorites.length > 0,
     });
   } catch (error) {
     return errorResponse(res, 'PROMPT_GET_ERROR', 'Erro ao buscar prompt', 500);
@@ -135,7 +141,7 @@ export const createPrompt = async (req: AuthRequest, res: Response) => {
     notifyMembers({
       type: 'NEW_PROMPT',
       title: title,
-      message: description || 'Novos prompts foram adicionados a biblioteca. Confira agora\!',
+      message: description || 'Novos prompts foram adicionados a biblioteca. Confira agora!',
       link: '/prompts',
     }).catch(() => {});
 
@@ -202,6 +208,82 @@ export const deletePrompt = async (req: AuthRequest, res: Response) => {
   }
 };
 
+
+// ==================== MEMBER: UPDATE OWN PROMPT ====================
+export const updateMyPrompt = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user!.id;
+    const { title, type, categoryId, content, promptText, description, thumbnailUrl, thumbnail, mediaUrl, tags, isPublic } = req.body;
+
+    // Verify ownership
+    const existing = await prisma.prompt.findUnique({ where: { id } });
+    if (!existing) {
+      return errorResponse(res, 'PROMPT_NOT_FOUND', 'Prompt nao encontrado', 404);
+    }
+    if (existing.authorId !== userId) {
+      return errorResponse(res, 'PROMPT_FORBIDDEN', 'Voce so pode editar seus proprios prompts', 403);
+    }
+
+    // Build only valid update fields (ignore extra frontend fields)
+    const updateData: any = {};
+    if (title !== undefined) updateData.title = title;
+    if (type !== undefined) updateData.type = (type || 'IMAGE').toUpperCase() as 'IMAGE' | 'VIDEO';
+    if (categoryId !== undefined) updateData.categoryId = categoryId;
+    if (description !== undefined) updateData.description = description;
+    if (mediaUrl !== undefined) updateData.mediaUrl = mediaUrl;
+    if (tags !== undefined) updateData.tags = tags;
+    if (isPublic !== undefined) updateData.isCommunity = isPublic === true;
+
+    // Handle content (frontend sends as 'content' or 'promptText')
+    const resolvedContent = content || promptText;
+    if (resolvedContent !== undefined) updateData.content = resolvedContent;
+
+    // Handle thumbnail (frontend sends as 'thumbnailUrl' or 'thumbnail')
+    const resolvedThumb = thumbnailUrl || thumbnail;
+    if (resolvedThumb !== undefined) updateData.thumbnailUrl = resolvedThumb;
+
+    const prompt = await prisma.prompt.update({
+      where: { id },
+      data: updateData,
+    });
+
+    return successResponse(res, prompt);
+  } catch (error) {
+    console.error('[updateMyPrompt] Error:', error);
+    return errorResponse(res, 'PROMPT_UPDATE_ERROR', 'Erro ao atualizar prompt', 500);
+  }
+};
+
+// ==================== MEMBER: DELETE OWN PROMPT ====================
+export const deleteMyPrompt = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user!.id;
+
+    // Verify ownership
+    const prompt = await prisma.prompt.findUnique({ where: { id } });
+    if (!prompt) {
+      return errorResponse(res, 'PROMPT_NOT_FOUND', 'Prompt nao encontrado', 404);
+    }
+    if (prompt.authorId !== userId) {
+      return errorResponse(res, 'PROMPT_FORBIDDEN', 'Voce so pode excluir seus proprios prompts', 403);
+    }
+
+    await prisma.prompt.delete({ where: { id } });
+
+    // Update category count
+    await prisma.category.update({
+      where: { id: prompt.categoryId },
+      data: { promptCount: { decrement: 1 } },
+    });
+
+    return successResponse(res, { message: 'Prompt excluido com sucesso' });
+  } catch (error) {
+    return errorResponse(res, 'PROMPT_DELETE_ERROR', 'Erro ao excluir prompt', 500);
+  }
+};
+
 export const toggleLike = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
@@ -259,12 +341,35 @@ export const copyPrompt = async (req: AuthRequest, res: Response) => {
 export const getMyPrompts = async (req: AuthRequest, res: Response) => {
   try {
     const prompts = await prisma.prompt.findMany({
-      where: { authorId: req.user!.id, isCommunity: true },
-      include: { category: true },
+      where: { authorId: req.user!.id },
+      include: {
+        category: true,
+        author: { select: { id: true, name: true } },
+        promptLikes: { where: { userId: req.user!.id } },
+        promptFavorites: { where: { userId: req.user!.id } },
+      },
       orderBy: { createdAt: 'desc' },
     });
 
-    return successResponse(res, prompts);
+    return successResponse(res, prompts.map((p) => ({
+      id: p.id,
+      title: p.title,
+      type: p.type,
+      category: p.category.name,
+      categoryId: p.categoryId,
+      content: p.content,
+      thumbnailUrl: p.thumbnailUrl,
+      mediaUrl: p.mediaUrl,
+      likes: p.likes,
+      author: p.author.name,
+      authorId: p.authorId,
+      createdAt: p.createdAt,
+      description: p.description,
+      tags: p.tags,
+      liked: p.promptLikes.length > 0,
+      favorited: p.promptFavorites.length > 0,
+      isCommunity: p.isCommunity,
+    })));
   } catch (error) {
     return errorResponse(res, 'MY_PROMPTS_ERROR', 'Erro ao buscar seus prompts', 500);
   }
@@ -272,19 +377,20 @@ export const getMyPrompts = async (req: AuthRequest, res: Response) => {
 
 export const createCommunityPrompt = async (req: AuthRequest, res: Response) => {
   try {
-    const { title, type, categoryId, content, description, thumbnailUrl, tags } = req.body;
+    const { title, type, categoryId, content, description, thumbnailUrl, mediaUrl, tags, isPublic } = req.body;
 
     const prompt = await prisma.prompt.create({
       data: {
         title,
-        type,
+        type: (type || 'IMAGE').toUpperCase() as 'IMAGE' | 'VIDEO',
         categoryId,
         content,
         description,
         thumbnailUrl,
+        mediaUrl: mediaUrl || null,
         tags: tags || [],
         authorId: req.user!.id,
-        isCommunity: true,
+        isCommunity: isPublic === true,
       },
     });
 
@@ -294,6 +400,37 @@ export const createCommunityPrompt = async (req: AuthRequest, res: Response) => 
   }
 };
 
+
+
+// Toggle prompt public/private (community visibility)
+export const togglePromptPublic = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const prompt = await prisma.prompt.findUnique({ where: { id } });
+    if (!prompt) {
+      return errorResponse(res, 'PROMPT_NOT_FOUND', 'Prompt nao encontrado', 404);
+    }
+
+    // Only author or admin can toggle
+    if (prompt.authorId !== req.user!.id) {
+      return errorResponse(res, 'FORBIDDEN', 'Voce nao tem permissao', 403);
+    }
+
+    const updated = await prisma.prompt.update({
+      where: { id },
+      data: { isCommunity: !prompt.isCommunity },
+    });
+
+    return successResponse(res, {
+      id: updated.id,
+      isCommunity: updated.isCommunity,
+      message: updated.isCommunity ? 'Prompt agora e publico na comunidade' : 'Prompt agora e privado',
+    });
+  } catch (error) {
+    return errorResponse(res, 'TOGGLE_PUBLIC_ERROR', 'Erro ao alterar visibilidade', 500);
+  }
+};
 
 // Bulk import prompts (admin only)
 export const bulkImportPrompts = async (req: AuthRequest, res: Response) => {
@@ -508,5 +645,174 @@ export const downloadImages = async (req: AuthRequest, res: Response) => {
   } catch (error) {
     console.error('[DownloadImages] Error:', error);
     return errorResponse(res, 'DOWNLOAD_ERROR', 'Erro ao baixar imagens', 500);
+  }
+};
+
+export const toggleFavorite = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user!.id;
+
+    const existing = await prisma.promptFavorite.findUnique({
+      where: { userId_promptId: { userId, promptId: id } },
+    });
+
+    if (existing) {
+      await prisma.promptFavorite.delete({
+        where: { id: existing.id },
+      });
+      return successResponse(res, { favorited: false });
+    } else {
+      await prisma.promptFavorite.create({
+        data: { userId, promptId: id },
+      });
+      return successResponse(res, { favorited: true });
+    }
+  } catch (error) {
+    return errorResponse(res, 'FAVORITE_ERROR', 'Erro ao processar favorito', 500);
+  }
+};
+
+export const getMyFavorites = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const limit = parseInt(req.query.limit as string) || 50;
+
+    const favorites = await prisma.promptFavorite.findMany({
+      where: { userId },
+      include: {
+        prompt: {
+          include: {
+            category: true,
+            author: { select: { id: true, name: true } },
+            promptLikes: { where: { userId } },
+            promptFavorites: { where: { userId } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+
+    return successResponse(
+      res,
+      favorites.map((f) => ({
+        id: f.prompt.id,
+        title: f.prompt.title,
+        type: f.prompt.type,
+        category: f.prompt.category.name,
+        categoryId: f.prompt.categoryId,
+        content: f.prompt.content,
+        thumbnailUrl: f.prompt.thumbnailUrl,
+        mediaUrl: f.prompt.mediaUrl,
+        likes: f.prompt.likes,
+        author: f.prompt.author.name,
+        createdAt: f.prompt.createdAt,
+        description: f.prompt.description,
+        tags: f.prompt.tags,
+        liked: f.prompt.promptLikes.length > 0,
+        favorited: true,
+      }))
+    );
+  } catch (error) {
+    return errorResponse(res, 'FAVORITES_ERROR', 'Erro ao listar favoritos', 500);
+  }
+};
+
+export const getMostLiked = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const limit = parseInt(req.query.limit as string) || 20;
+
+    const prompts = await prisma.prompt.findMany({
+      where: { isCommunity: false, likes: { gt: 0 } },
+      include: {
+        category: true,
+        author: { select: { id: true, name: true } },
+        promptLikes: { where: { userId } },
+        promptFavorites: { where: { userId } },
+      },
+      orderBy: { likes: 'desc' },
+      take: limit,
+    });
+
+    return successResponse(
+      res,
+      prompts.map((p) => ({
+        id: p.id,
+        title: p.title,
+        type: p.type,
+        category: p.category.name,
+        categoryId: p.categoryId,
+        content: p.content,
+        thumbnailUrl: p.thumbnailUrl,
+        mediaUrl: p.mediaUrl,
+        likes: p.likes,
+        author: p.author.name,
+        createdAt: p.createdAt,
+        description: p.description,
+        tags: p.tags,
+        liked: p.promptLikes.length > 0,
+        favorited: p.promptFavorites.length > 0,
+      }))
+    );
+  } catch (error) {
+    return errorResponse(res, 'MOST_LIKED_ERROR', 'Erro ao listar mais curtidos', 500);
+  }
+};
+
+export const bulkDeletePrompts = async (req: AuthRequest, res: Response) => {
+  try {
+    const { ids } = req.body;
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return errorResponse(res, 'INVALID_IDS', 'Lista de IDs invalida', 400);
+    }
+
+    if (ids.length > 500) {
+      return errorResponse(res, 'TOO_MANY_IDS', 'Maximo de 500 prompts por vez', 400);
+    }
+
+    // Get prompts to find their categories for count update
+    const prompts = await prisma.prompt.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, categoryId: true, title: true },
+    });
+
+    if (prompts.length === 0) {
+      return errorResponse(res, 'NO_PROMPTS_FOUND', 'Nenhum prompt encontrado', 404);
+    }
+
+    // Delete related records first (likes, favorites)
+    await prisma.promptLike.deleteMany({ where: { promptId: { in: ids } } });
+    await prisma.promptFavorite.deleteMany({ where: { promptId: { in: ids } } });
+
+    // Delete prompts
+    const result = await prisma.prompt.deleteMany({ where: { id: { in: ids } } });
+
+    // Update category counts
+    const categoryCounts: Record<string, number> = {};
+    for (const p of prompts) {
+      categoryCounts[p.categoryId] = (categoryCounts[p.categoryId] || 0) + 1;
+    }
+    for (const [catId, count] of Object.entries(categoryCounts)) {
+      await prisma.category.update({
+        where: { id: catId },
+        data: { promptCount: { decrement: count } },
+      }).catch(() => {});
+    }
+
+    // Fire webhook
+    fireWebhookEvent('prompt.bulk_deleted', {
+      count: result.count,
+      ids: ids,
+    });
+
+    return successResponse(res, {
+      message: `${result.count} prompts deletados com sucesso`,
+      count: result.count,
+    });
+  } catch (error) {
+    return errorResponse(res, 'BULK_DELETE_ERROR', 'Erro ao deletar prompts em massa', 500);
   }
 };

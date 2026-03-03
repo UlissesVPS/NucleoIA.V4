@@ -8,3 +8,4 @@ export { default as AIToolFormDrawer } from "./AIToolFormDrawer";
 export { default as PromptFormDrawer } from "./PromptFormDrawer";
 export { default as CourseFormDrawer } from "./CourseFormDrawer";
 export { default as ProductFormDrawer } from "./ProductFormDrawer";
+export { default as AgentFormDrawer } from "./AgentFormDrawer";

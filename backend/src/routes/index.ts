@@ -16,6 +16,8 @@ import uploadRoutes from './upload.routes';
 import settingsRoutes from './settings.routes';
 import totpRoutes from './totp.routes';
 import apiRoutes from './api.routes';
+import agentsRoutes from './agents.routes';
+import promptHubRoutes from './prompthub.routes';
 
 const router = Router();
 
@@ -40,6 +42,8 @@ router.use('/shared-credentials', sharedCredentialsRoutes);
 router.use('/upload', uploadRoutes);
 router.use('/settings', settingsRoutes);
 router.use('/totp', totpRoutes);
+router.use('/agents', agentsRoutes);
 router.use('/api/v1', apiRoutes);
+router.use('/ph', promptHubRoutes);
 
 export default router;

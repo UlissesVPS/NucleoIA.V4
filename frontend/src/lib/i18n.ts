@@ -46,6 +46,7 @@ const translations: Translations = {
       authenticator: "Autenticador 2FA",
       superAdminPanel: "Painel Super Admin",
       system: "Sistema",
+      agents: "Agentes",
     },
     dashboard: {
       quickAccess: "Acesso rápido",
@@ -187,6 +188,7 @@ const translations: Translations = {
       authenticator: "2FA Authenticator",
       superAdminPanel: "Super Admin Panel",
       system: "System",
+      agents: "Agents",
     },
     dashboard: {
       quickAccess: "Quick Access",
@@ -328,6 +330,7 @@ const translations: Translations = {
       authenticator: "Autenticador 2FA",
       superAdminPanel: "Panel Super Admin",
       system: "Sistema",
+      agents: "Agentes",
     },
     dashboard: {
       quickAccess: "Acceso rápido",

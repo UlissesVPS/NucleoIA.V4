@@ -1,12 +1,12 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, RefreshCw, Copy, Check, Key, ChevronRight, AlertTriangle, MessageCircle, GraduationCap, Loader2, Timer } from "lucide-react";
+import { Shield, RefreshCw, Copy, Check, Key, ChevronRight, AlertTriangle, MessageCircle, GraduationCap, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import OrbitingAILogos from "@/components/OrbitingAILogos";
 import { toast } from "@/components/ui/sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/contexts/AuthContext";
-import { useTotpStatus, useGenerateTotp, useTotpCurrentCode } from "@/hooks/useApi";
+import { useTotpStatus, useGenerateTotp } from "@/hooks/useApi";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,8 +17,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-
-const SESSION_DURATION = 180000; // 3 minutes in ms
 
 const Authenticator = () => {
   const navigate = useNavigate();
@@ -32,53 +30,32 @@ const Authenticator = () => {
   const [showWarningDialog, setShowWarningDialog] = useState(false);
   const [showLimitReachedDialog, setShowLimitReachedDialog] = useState(false);
   const [showInitialAlert, setShowInitialAlert] = useState(true);
-
-  // Session state
-  const [sessionActive, setSessionActive] = useState(false);
-  const [sessionTimeLeft, setSessionTimeLeft] = useState(0);
-  const sessionExpiryRef = useRef<number>(0);
-
-  // Auto-refresh query — only enabled when session is active
-  const { data: refreshData } = useTotpCurrentCode("Dicloak", sessionActive);
+  const lastEpochWindowRef = useRef<number>(0);
 
   const usedCodes = status?.usedThisMonth ?? 0;
   const maxCodes = status?.maxAllowed ?? 3;
   const isUnlimited = status?.isUnlimited ?? false;
   const remainingAttempts = isUnlimited ? Infinity : maxCodes - usedCodes;
 
-  // Update code from auto-refresh
+  // Real TOTP 30s countdown synced to epoch boundaries
   useEffect(() => {
-    if (refreshData?.code && sessionActive) {
-      const raw = refreshData.code as string;
-      const formatted = raw.slice(0, 3) + " " + raw.slice(3);
-      setCode(formatted);
-    }
-  }, [refreshData, sessionActive]);
-
-  // 30s TOTP cycle countdown + session timer
-  useEffect(() => {
-    const tick = () => {
+    const updateCycle = () => {
       const epoch = Math.floor(Date.now() / 1000);
-      setCycle(30 - (epoch % 30));
+      const remaining = 30 - (epoch % 30);
+      const currentWindow = Math.floor(epoch / 30);
 
-      // Session countdown
-      if (sessionActive && sessionExpiryRef.current > 0) {
-        const remaining = sessionExpiryRef.current - Date.now();
-        if (remaining <= 0) {
-          setSessionActive(false);
-          setCode(null);
-          setSessionTimeLeft(0);
-          sessionExpiryRef.current = 0;
-        } else {
-          setSessionTimeLeft(remaining);
-        }
+      // Code expired — crossed a 30s boundary
+      if (lastEpochWindowRef.current !== 0 && currentWindow !== lastEpochWindowRef.current && code) {
+        setCode(null);
       }
+      lastEpochWindowRef.current = currentWindow;
+      setCycle(remaining);
     };
 
-    tick();
-    const interval = setInterval(tick, 1000);
+    updateCycle();
+    const interval = setInterval(updateCycle, 1000);
     return () => clearInterval(interval);
-  }, [sessionActive]);
+  }, [code]);
 
   const handleCopy = async () => {
     if (code) {
@@ -105,13 +82,7 @@ const Authenticator = () => {
       const raw = result.code as string;
       const formatted = raw.slice(0, 3) + " " + raw.slice(3);
       setCode(formatted);
-
-      // Start 3-minute session
-      sessionExpiryRef.current = Date.now() + SESSION_DURATION;
-      setSessionActive(true);
-      setSessionTimeLeft(SESSION_DURATION);
-
-      toast.success(isUnlimited ? "Codigo gerado (Admin)" : "Codigo gerado! Sessao ativa por 3 minutos.");
+      toast.success("Codigo gerado com sucesso!");
     } catch (error: any) {
       const errCode = error?.response?.data?.error?.code;
       if (errCode === "TOTP_LIMIT_REACHED") {
@@ -145,15 +116,6 @@ const Authenticator = () => {
     return "bg-accent";
   };
 
-  const formatSessionTime = (ms: number) => {
-    const totalSec = Math.ceil(ms / 1000);
-    const min = Math.floor(totalSec / 60);
-    const sec = totalSec % 60;
-    return `${min}:${sec.toString().padStart(2, "0")}`;
-  };
-
-  const sessionProgress = sessionTimeLeft / SESSION_DURATION;
-
   return (
     <div className="relative min-h-[calc(100vh-8rem)] flex flex-col items-center justify-center overflow-hidden">
       <div className="absolute inset-0 bg-background" />
@@ -162,7 +124,7 @@ const Authenticator = () => {
       <div className="relative z-10 w-full max-w-md px-4">
         {/* Initial Alert for Members */}
         <AnimatePresence>
-          {!isUnlimited && showInitialAlert && !sessionActive && (
+          {!isUnlimited && showInitialAlert && (
             <motion.div
               initial={{ opacity: 0, y: -10, height: 0 }}
               animate={{ opacity: 1, y: 0, height: "auto" }}
@@ -233,6 +195,31 @@ const Authenticator = () => {
               <div className="text-center mb-6">
                 <h1 className="text-xl sm:text-2xl font-bold text-foreground mb-1">Autenticador 2FA</h1>
                 <p className="text-sm text-muted-foreground">Codigo sincronizado com Dicloak</p>
+                {!statusLoading && (
+                  <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/40 border border-border">
+                    {isUnlimited ? (
+                      <span className="text-xs text-primary font-medium">Ilimitado (Admin)</span>
+                    ) : (
+                      <>
+                        <div className="flex gap-1">
+                          {[...Array(maxCodes)].map((_, i) => (
+                            <div
+                              key={i}
+                              className={`h-2 w-2 rounded-full transition-colors ${i < usedCodes ? "bg-gradient-to-r from-primary to-accent" : "bg-muted-foreground/30"}`}
+                            />
+                          ))}
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          {remainingAttempts > 0 ? (
+                            <><strong className="text-foreground">{remainingAttempts}</strong> de {maxCodes} tentativas restantes</>
+                          ) : (
+                            <span className="text-destructive font-medium">Limite atingido</span>
+                          )}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Usage Status */}
@@ -242,15 +229,7 @@ const Authenticator = () => {
                     <Loader2 className="h-4 w-4 animate-spin text-muted-foreground mr-2" />
                     <span className="text-sm text-muted-foreground">Carregando...</span>
                   </div>
-                ) : isUnlimited ? (
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-border">
-                    <span className="text-sm text-muted-foreground">Modo Admin:</span>
-                    <div className="flex items-center gap-1.5 text-success">
-                      <Shield className="h-4 w-4" />
-                      <span className="font-semibold text-sm">ILIMITADO</span>
-                    </div>
-                  </div>
-                ) : (
+                ) : isUnlimited ? null : (
                   <div className="p-3 rounded-lg bg-muted/30 border border-border">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm text-muted-foreground">Tentativas usadas:</span>
@@ -275,111 +254,71 @@ const Authenticator = () => {
                 )}
               </div>
 
-              {/* Session Timer Banner */}
-              <AnimatePresence>
-                {sessionActive && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="mb-4"
-                  >
-                    <div className="p-3 rounded-xl bg-primary/10 border border-primary/30">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <Timer className="h-4 w-4 text-primary" />
-                          <span className="text-sm font-medium text-primary">Sessao ativa</span>
-                        </div>
-                        <span className="text-sm font-mono font-bold text-primary">
-                          {formatSessionTime(sessionTimeLeft)}
-                        </span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-muted/30 overflow-hidden">
-                        <motion.div
-                          className="h-full rounded-full bg-gradient-to-r from-primary to-accent"
-                          style={{ width: `${sessionProgress * 100}%` }}
-                          transition={{ duration: 0.3 }}
-                        />
-                      </div>
-                      <p className="text-[10px] text-primary/60 mt-1.5 text-center">
-                        Codigo atualiza automaticamente a cada 30s
-                      </p>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
               {/* Code Display */}
-              <AnimatePresence>
-                {code && (
-                  <motion.div
-                    className="text-center mb-6 p-5 rounded-xl bg-muted/30 border border-border relative overflow-hidden"
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.9 }}
-                  >
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-shimmer" />
-                    <motion.p
-                      key={code}
-                      initial={{ opacity: 0.5, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ duration: 0.3 }}
-                      className="text-4xl sm:text-5xl font-mono font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent tracking-[0.2em] mb-4"
-                    >
-                      {code}
-                    </motion.p>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleCopy}
-                      className={`gap-2 ${copied ? "text-success" : "text-muted-foreground hover:text-foreground"}`}
-                    >
-                      {copied ? (
-                        <>
-                          <Check className="h-4 w-4" />
-                          Copiado!
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-4 w-4" />
-                          Copiar Codigo
-                        </>
-                      )}
-                    </Button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* Generate Button */}
-              {!sessionActive && (
-                <Button
-                  className="w-full h-12 text-base font-semibold bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 text-white border-0 rounded-xl mb-3"
-                  onClick={handleGenerateClick}
-                  disabled={generateTotp.isPending || (!isUnlimited && usedCodes >= maxCodes)}
+              {code && (
+                <motion.div
+                  className="text-center mb-6 p-5 rounded-xl bg-muted/30 border border-border relative overflow-hidden"
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
                 >
-                  {generateTotp.isPending ? (
-                    <>
-                      <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                      Gerando...
-                    </>
-                  ) : !isUnlimited && usedCodes >= maxCodes ? (
-                    <>
-                      <AlertTriangle className="h-5 w-5 mr-2" />
-                      Limite Atingido
-                    </>
-                  ) : (
-                    "Gerar Codigo 2FA"
-                  )}
-                </Button>
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent animate-shimmer" />
+                  <p className="text-4xl sm:text-5xl font-mono font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent tracking-[0.2em] mb-4">
+                    {code}
+                  </p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleCopy}
+                    className={`gap-2 ${copied ? "text-success" : "text-muted-foreground hover:text-foreground"}`}
+                  >
+                    {copied ? (
+                      <>
+                        <Check className="h-4 w-4" />
+                        Copiado!
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-4 w-4" />
+                        Copiar Codigo
+                      </>
+                    )}
+                  </Button>
+                </motion.div>
               )}
 
-              {!isUnlimited && !sessionActive && usedCodes < maxCodes && (
-                <p className="text-center text-xs text-primary/80 mb-4">
-                  Sessao ativa por 3 minutos (consumira 1 tentativa)
+              {/* Generate Button */}
+              <Button
+                className="w-full h-12 text-base font-semibold bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 text-white border-0 rounded-xl mb-3"
+                onClick={handleGenerateClick}
+                disabled={generateTotp.isPending || (!isUnlimited && usedCodes >= maxCodes) || cycle < 20}
+              >
+                {generateTotp.isPending ? (
+                  <>
+                    <Loader2 className="h-5 w-5 animate-spin mr-2" />
+                    Gerando...
+                  </>
+                ) : !isUnlimited && usedCodes >= maxCodes ? (
+                  <>
+                    <AlertTriangle className="h-5 w-5 mr-2" />
+                    Limite Atingido
+                  </>
+                ) : cycle < 20 ? (
+                  <>
+                    <RefreshCw className="h-5 w-5 mr-2" />
+                    Aguarde {cycle}s...
+                  </>
+                ) : (
+                  "Gerar Codigo 2FA"
+                )}
+              </Button>
+
+              {!isUnlimited && usedCodes < maxCodes && (
+                <p className={"text-center text-xs mb-4 " + (cycle < 20 ? "text-amber-500" : "text-primary/80")}>
+                  {cycle < 20 ? "Aguarde o proximo ciclo para gerar com seguranca" : "Codigo valido por 30 segundos (consumira 1 tentativa)"}
                 </p>
               )}
 
-              {!isUnlimited && !sessionActive && usedCodes >= maxCodes && (
+              {!isUnlimited && usedCodes >= maxCodes && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -428,23 +367,7 @@ const Authenticator = () => {
                 <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
               </motion.div>
 
-              {/* Admin badge */}
-              {isUnlimited && (
-                <motion.div
-                  className="mt-4 p-3 rounded-xl bg-success/10 border border-success/20"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.3 }}
-                >
-                  <div className="flex items-center gap-2">
-                    <Shield className="h-4 w-4 text-success" />
-                    <div>
-                      <p className="text-sm font-medium text-success">Modo Administrativo</p>
-                      <p className="text-xs text-success/70">Voce pode gerar codigos ilimitados.</p>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
+
             </div>
           </div>
         </motion.div>
@@ -467,7 +390,7 @@ const Authenticator = () => {
                 Cada codigo gerado consome <strong className="text-foreground">1 tentativa</strong> do seu limite mensal.
               </p>
               <p className="text-sm">
-                O codigo ficara ativo por <strong className="text-foreground">3 minutos</strong>, atualizando automaticamente.
+                Certifique-se de que <strong className="text-foreground">assistiu a aula</strong> e sabe como usar o codigo!
               </p>
             </AlertDialogDescription>
           </AlertDialogHeader>

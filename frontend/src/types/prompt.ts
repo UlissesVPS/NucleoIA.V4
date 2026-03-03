@@ -16,4 +16,8 @@ export interface Prompt {
   thumbnailUrl?: string;
   isCommunity?: boolean;
   authorId?: string;
+  mediaUrl?: string | null;
+  categoryId?: string;
+  liked?: boolean;
+  favorited?: boolean;
 }

@@ -1,0 +1,513 @@
+import { fireWebhookEvent } from '../services/webhook.service';
+import { Response } from 'express';
+import { notifyMembers } from "../services/notification.service";
+import prisma from '../config/database';
+import { successResponse, errorResponse } from '../utils/response';
+import { AuthRequest } from '../middleware/auth.middleware';
+import sharp from 'sharp';
+import { v4 as uuidv4 } from 'uuid';
+import path from 'path';
+import fs from 'fs';
+
+export const listPrompts = async (req: AuthRequest, res: Response) => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const type = req.query.type as string;
+    const category = req.query.category as string;
+    const search = req.query.search as string;
+
+    const where: any = { isCommunity: false };
+
+    if (type) where.type = type;
+    if (category) where.categoryId = category;
+    if (search) {
+      where.OR = [
+        { title: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [prompts, total] = await Promise.all([
+      prisma.prompt.findMany({
+        where,
+        include: {
+          category: true,
+          author: { select: { id: true, name: true } },
+          promptLikes: { where: { userId: req.user!.id } },
+        },
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'asc' },
+      }),
+      prisma.prompt.count({ where }),
+    ]);
+
+    return successResponse(
+      res,
+      prompts.map((p) => ({
+        id: p.id,
+        title: p.title,
+        type: p.type,
+        category: p.category.name,
+        categoryId: p.categoryId,
+        content: p.content,
+        thumbnailUrl: p.thumbnailUrl,
+        mediaUrl: p.mediaUrl,
+        likes: p.likes,
+        author: p.author.name,
+        createdAt: p.createdAt,
+        description: p.description,
+        tags: p.tags,
+        liked: p.promptLikes.length > 0,
+      })),
+      { total, page, limit, totalPages: Math.ceil(total / limit) }
+    );
+  } catch (error) {
+    return errorResponse(res, 'PROMPTS_LIST_ERROR', 'Erro ao listar prompts', 500);
+  }
+};
+
+export const getPrompt = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const prompt = await prisma.prompt.findUnique({
+      where: { id },
+      include: {
+        category: true,
+        author: { select: { id: true, name: true } },
+        promptLikes: { where: { userId: req.user!.id } },
+      },
+    });
+
+    if (!prompt) {
+      return errorResponse(res, 'PROMPT_NOT_FOUND', 'Prompt nao encontrado', 404);
+    }
+
+    return successResponse(res, {
+      id: prompt.id,
+      title: prompt.title,
+      type: prompt.type,
+      category: prompt.category.name,
+      categoryId: prompt.categoryId,
+      content: prompt.content,
+      description: prompt.description,
+      thumbnailUrl: prompt.thumbnailUrl,
+      mediaUrl: prompt.mediaUrl,
+      tags: prompt.tags,
+      likes: prompt.likes,
+      author: prompt.author.name,
+      authorId: prompt.authorId,
+      createdAt: prompt.createdAt,
+      liked: prompt.promptLikes.length > 0,
+    });
+  } catch (error) {
+    return errorResponse(res, 'PROMPT_GET_ERROR', 'Erro ao buscar prompt', 500);
+  }
+};
+
+export const createPrompt = async (req: AuthRequest, res: Response) => {
+  try {
+    const { title, type, categoryId, content, description, thumbnailUrl, mediaUrl, tags } = req.body;
+
+    const prompt = await prisma.prompt.create({
+      data: {
+        title,
+        type,
+        categoryId,
+        content,
+        description,
+        thumbnailUrl,
+        mediaUrl,
+        tags: tags || [],
+        authorId: req.user!.id,
+        isCommunity: false,
+      },
+    });
+
+    // Update category count
+    await prisma.category.update({
+      where: { id: categoryId },
+      data: { promptCount: { increment: 1 } },
+    });
+
+    // Notify members about new prompt (async, don't block response)
+    notifyMembers({
+      type: 'NEW_PROMPT',
+      title: title,
+      message: description || 'Novos prompts foram adicionados a biblioteca. Confira agora\!',
+      link: '/prompts',
+    }).catch(() => {});
+
+    // Fire webhook
+    fireWebhookEvent('prompt.created', { id: prompt.id, title: prompt.title, type: prompt.type, categoryId: prompt.categoryId });
+
+    return successResponse(res, prompt, undefined, 201);
+  } catch (error) {
+    return errorResponse(res, 'PROMPT_CREATE_ERROR', 'Erro ao criar prompt', 500);
+  }
+};
+
+export const updatePrompt = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { title, type, categoryId, content, description, thumbnailUrl, mediaUrl, tags } = req.body;
+
+    const prompt = await prisma.prompt.update({
+      where: { id },
+      data: {
+        title,
+        type,
+        categoryId,
+        content,
+        description,
+        thumbnailUrl,
+        mediaUrl,
+        tags,
+      },
+    });
+
+    // Fire webhook
+    fireWebhookEvent('prompt.updated', { id: prompt.id, title: prompt.title, type: prompt.type });
+
+    return successResponse(res, prompt);
+  } catch (error) {
+    return errorResponse(res, 'PROMPT_UPDATE_ERROR', 'Erro ao atualizar prompt', 500);
+  }
+};
+
+export const deletePrompt = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const prompt = await prisma.prompt.findUnique({ where: { id } });
+    if (!prompt) {
+      return errorResponse(res, 'PROMPT_NOT_FOUND', 'Prompt nao encontrado', 404);
+    }
+
+    await prisma.prompt.delete({ where: { id } });
+
+    // Update category count
+    await prisma.category.update({
+      where: { id: prompt.categoryId },
+      data: { promptCount: { decrement: 1 } },
+    });
+
+    // Fire webhook
+    fireWebhookEvent('prompt.deleted', { id: prompt.id, title: prompt.title });
+
+    return successResponse(res, { message: 'Prompt deletado com sucesso' });
+  } catch (error) {
+    return errorResponse(res, 'PROMPT_DELETE_ERROR', 'Erro ao deletar prompt', 500);
+  }
+};
+
+export const toggleLike = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user!.id;
+
+    const existingLike = await prisma.promptLike.findUnique({
+      where: { userId_promptId: { userId, promptId: id } },
+    });
+
+    if (existingLike) {
+      await prisma.promptLike.delete({
+        where: { id: existingLike.id },
+      });
+      await prisma.prompt.update({
+        where: { id },
+        data: { likes: { decrement: 1 } },
+      });
+      return successResponse(res, { liked: false });
+    } else {
+      await prisma.promptLike.create({
+        data: { userId, promptId: id },
+      });
+      await prisma.prompt.update({
+        where: { id },
+        data: { likes: { increment: 1 } },
+      });
+      return successResponse(res, { liked: true });
+    }
+  } catch (error) {
+    return errorResponse(res, 'LIKE_ERROR', 'Erro ao processar like', 500);
+  }
+};
+
+export const copyPrompt = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    await prisma.activityLog.create({
+      data: {
+        userId: req.user!.id,
+        type: 'COPY',
+        description: 'Prompt copiado',
+        ipAddress: req.ip,
+        metadata: { promptId: id },
+      },
+    });
+
+    return successResponse(res, { copied: true });
+  } catch (error) {
+    return errorResponse(res, 'COPY_ERROR', 'Erro ao registrar copia', 500);
+  }
+};
+
+// Community prompts
+export const getMyPrompts = async (req: AuthRequest, res: Response) => {
+  try {
+    const prompts = await prisma.prompt.findMany({
+      where: { authorId: req.user!.id, isCommunity: true },
+      include: { category: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return successResponse(res, prompts);
+  } catch (error) {
+    return errorResponse(res, 'MY_PROMPTS_ERROR', 'Erro ao buscar seus prompts', 500);
+  }
+};
+
+export const createCommunityPrompt = async (req: AuthRequest, res: Response) => {
+  try {
+    const { title, type, categoryId, content, description, thumbnailUrl, tags } = req.body;
+
+    const prompt = await prisma.prompt.create({
+      data: {
+        title,
+        type,
+        categoryId,
+        content,
+        description,
+        thumbnailUrl,
+        tags: tags || [],
+        authorId: req.user!.id,
+        isCommunity: true,
+      },
+    });
+
+    return successResponse(res, prompt, undefined, 201);
+  } catch (error) {
+    return errorResponse(res, 'COMMUNITY_PROMPT_ERROR', 'Erro ao criar prompt', 500);
+  }
+};
+
+
+// Bulk import prompts (admin only)
+export const bulkImportPrompts = async (req: AuthRequest, res: Response) => {
+  try {
+    const { prompts: promptsData } = req.body;
+
+    if (!Array.isArray(promptsData) || promptsData.length === 0) {
+      return errorResponse(res, 'INVALID_DATA', 'Nenhum prompt para importar', 400);
+    }
+
+    if (promptsData.length > 500) {
+      return errorResponse(res, 'TOO_MANY', 'Maximo de 500 prompts por importacao', 400);
+    }
+
+    // Collect unique category names from prompts
+    const categoryNames = [...new Set(promptsData.map((p: any) => p.category_name || 'Outros'))];
+
+    // Get or create categories
+    const categoryMap: Record<string, string> = {};
+    for (const name of categoryNames) {
+      const slug = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+      let category = await prisma.category.findFirst({
+        where: {
+          OR: [
+            { name: { equals: name, mode: 'insensitive' } },
+            { slug: slug },
+          ],
+        },
+      });
+
+      if (!category) {
+        category = await prisma.category.create({
+          data: { name, slug: slug || 'outros-' + Date.now() },
+        });
+      }
+
+      categoryMap[name] = category.id;
+    }
+
+    // Import prompts in batches
+    const results = { imported: 0, errors: 0, errorDetails: [] as string[] };
+    const authorId = req.user!.id;
+
+    // Use createMany for performance (batch of all prompts)
+    const promptsToCreate = promptsData.map((p: any, i: number) => {
+      const catName = p.category_name || 'Outros';
+      const categoryId = categoryMap[catName] || categoryMap['Outros'];
+      const rawType = String(p.type || 'image').toUpperCase();
+      const type = rawType === 'VIDEO' ? 'VIDEO' : 'IMAGE';
+
+      return {
+        title: String(p.title || `Prompt ${i + 1}`).substring(0, 200),
+        type: type as 'IMAGE' | 'VIDEO',
+        categoryId,
+        content: String(p.content || ''),
+        description: p.description ? String(p.description).substring(0, 500) : null,
+        thumbnailUrl: p.thumbnail_url || p.thumbnailUrl || null,
+        mediaUrl: p.media_url || p.mediaUrl || null,
+        tags: Array.isArray(p.tags) ? p.tags : [],
+        authorId,
+        isCommunity: false,
+      };
+    });
+
+    // Use createMany for batch insert
+    const result = await prisma.prompt.createMany({
+      data: promptsToCreate,
+      skipDuplicates: true,
+    });
+
+    results.imported = result.count;
+
+    // Update category counts
+    for (const [name, catId] of Object.entries(categoryMap)) {
+      const count = promptsToCreate.filter((p: any) => p.categoryId === catId).length;
+      if (count > 0) {
+        await prisma.category.update({
+          where: { id: catId },
+          data: { promptCount: { increment: count } },
+        });
+      }
+    }
+
+    // Log activity
+    await prisma.activityLog.create({
+      data: {
+        userId: authorId,
+        type: 'ADMIN',
+        description: `Importacao em massa: ${results.imported} prompts importados`,
+        ipAddress: req.ip,
+        metadata: {
+          imported: results.imported,
+          categories: Object.keys(categoryMap),
+        },
+      },
+    });
+
+    // Fire webhook
+    fireWebhookEvent('prompt.bulk_imported', {
+      count: results.imported,
+      categories: Object.keys(categoryMap),
+    });
+
+    return successResponse(res, {
+      imported: results.imported,
+      errors: results.errors,
+      errorDetails: results.errorDetails,
+      categoriesUsed: Object.keys(categoryMap),
+    }, undefined, 201);
+  } catch (error) {
+    console.error('[BulkImport] Error:', error);
+    return errorResponse(res, 'BULK_IMPORT_ERROR', 'Erro ao importar prompts em massa', 500);
+  }
+};
+
+// Download and optimize external images locally
+export const downloadImages = async (req: AuthRequest, res: Response) => {
+  try {
+    const { images } = req.body;
+
+    if (!Array.isArray(images) || images.length === 0) {
+      return errorResponse(res, 'INVALID_DATA', 'Nenhuma imagem para baixar', 400);
+    }
+
+    if (images.length > 200) {
+      return errorResponse(res, 'TOO_MANY', 'Maximo de 200 imagens por request', 400);
+    }
+
+    const uploadsDir = path.join(__dirname, '../../uploads/thumbnails');
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    const results: Array<{ original_url: string; local_url: string; success: boolean; error?: string }> = [];
+
+    // Process in batches of 5
+    const batchSize = 5;
+    for (let i = 0; i < images.length; i += batchSize) {
+      const batch = images.slice(i, i + batchSize);
+      const batchResults = await Promise.allSettled(
+        batch.map(async (img: { url: string; filename_hint?: string }) => {
+          const originalUrl = img.url;
+          try {
+            // Fetch image with timeout
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 15000);
+
+            const response = await fetch(originalUrl, {
+              signal: controller.signal,
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; NucleoIA/1.0)',
+              },
+            });
+            clearTimeout(timeout);
+
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
+
+            const buffer = Buffer.from(await response.arrayBuffer());
+
+            // Optimize with sharp: resize max 800px, convert to webp
+            const uuid = uuidv4();
+            const filename = `${uuid}.webp`;
+            const filepath = path.join(uploadsDir, filename);
+
+            await sharp(buffer)
+              .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+              .webp({ quality: 85 })
+              .toFile(filepath);
+
+            const localUrl = `/uploads/thumbnails/${filename}`;
+
+            return { original_url: originalUrl, local_url: localUrl, success: true };
+          } catch (err: any) {
+            return {
+              original_url: originalUrl,
+              local_url: '',
+              success: false,
+              error: err.message || 'Download failed',
+            };
+          }
+        })
+      );
+
+      for (const result of batchResults) {
+        if (result.status === 'fulfilled') {
+          results.push(result.value);
+        } else {
+          results.push({
+            original_url: 'unknown',
+            local_url: '',
+            success: false,
+            error: result.reason?.message || 'Promise rejected',
+          });
+        }
+      }
+    }
+
+    const successCount = results.filter(r => r.success).length;
+    const errorCount = results.filter(r => !r.success).length;
+
+    console.log(`[DownloadImages] ${successCount} downloaded, ${errorCount} errors`);
+
+    return successResponse(res, {
+      total: results.length,
+      downloaded: successCount,
+      errors: errorCount,
+      results,
+    });
+  } catch (error) {
+    console.error('[DownloadImages] Error:', error);
+    return errorResponse(res, 'DOWNLOAD_ERROR', 'Erro ao baixar imagens', 500);
+  }
+};

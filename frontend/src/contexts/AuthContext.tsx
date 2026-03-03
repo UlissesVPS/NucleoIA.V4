@@ -16,6 +16,7 @@ interface User {
   role: string;
   avatarUrl?: string | null;
   plan?: string;
+  planTier?: string;
   subscriptionStatus?: string;
 }
 
@@ -37,7 +38,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const PUBLIC_PATHS = ['/login', '/solicitar-acesso', '/auth/magic', '/primeiro-acesso'];
+const PUBLIC_PATHS = ['/login', '/solicitar-acesso', '/auth/magic', '/primeiro-acesso', '/esqueci-senha', '/redefinir-senha'];
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);

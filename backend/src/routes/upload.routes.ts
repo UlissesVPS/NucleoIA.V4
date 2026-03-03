@@ -5,10 +5,16 @@ import { handleUploadImage, handleUploadThumbnail, handleUploadVideo } from '../
 
 const router = Router();
 
-router.use(authMiddleware, adminMiddleware);
+router.use(authMiddleware);
 
-router.post('/image', uploadImage, handleUploadImage);
-router.post('/thumbnail', uploadThumbnail, handleUploadThumbnail);
-router.post('/video', uploadVideo, handleUploadVideo);
+// Member routes (any logged-in user can upload for their prompts)
+router.post('/member/image', uploadImage, handleUploadImage);
+router.post('/member/thumbnail', uploadThumbnail, handleUploadThumbnail);
+router.post('/member/video', uploadVideo, handleUploadVideo);
+
+// Admin routes
+router.post('/image', adminMiddleware, uploadImage, handleUploadImage);
+router.post('/thumbnail', adminMiddleware, uploadThumbnail, handleUploadThumbnail);
+router.post('/video', adminMiddleware, uploadVideo, handleUploadVideo);
 
 export default router;

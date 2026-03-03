@@ -14,6 +14,9 @@ export const getStats = async (req: AuthRequest, res: Response) => {
   try {
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
 
+    const now = new Date();
+    const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
     const [
       totalUsers,
       activeUsers,
@@ -21,6 +24,8 @@ export const getStats = async (req: AuthRequest, res: Response) => {
       totalPrompts,
       totalCourses,
       totalProducts,
+      totalAiTools,
+      newUsersThisMonth,
       onlineUsers,
       todayLogins,
     ] = await Promise.all([
@@ -30,6 +35,8 @@ export const getStats = async (req: AuthRequest, res: Response) => {
       prisma.prompt.count(),
       prisma.course.count({ where: { isPublished: true } }),
       prisma.product.count({ where: { isActive: true } }),
+      prisma.aiTool.count({ where: { isActive: true } }),
+      prisma.user.count({ where: { createdAt: { gte: firstDayOfMonth } } }),
       prisma.session.count({ where: { isActive: true, lastActivity: { gte: fiveMinutesAgo } } }),
       prisma.activityLog.count({
         where: {
@@ -40,9 +47,16 @@ export const getStats = async (req: AuthRequest, res: Response) => {
     ]);
 
     return successResponse(res, {
-      users: { total: totalUsers, active: activeUsers, premium: premiumUsers },
-      content: { prompts: totalPrompts, courses: totalCourses, products: totalProducts },
-      activity: { online: onlineUsers, todayLogins },
+      totalUsers,
+      activeUsers,
+      premiumUsers,
+      totalPrompts,
+      totalCourses,
+      totalProducts,
+      totalAiTools,
+      newUsersThisMonth,
+      onlineUsers,
+      todayLogins,
     });
   } catch (error) {
     return errorResponse(res, 'STATS_ERROR', 'Erro ao buscar estatisticas', 500);
@@ -692,5 +706,60 @@ export const getIpHistory = async (req: AuthRequest, res: Response) => {
     });
   } catch (error) {
     return errorResponse(res, 'IP_HISTORY_ERROR', 'Erro ao buscar historico de IPs', 500);
+  }
+};
+
+
+// ==================== ADMIN: Generate Password Reset Link ====================
+export const adminGenerateResetLink = async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+    if (!email || !email.trim()) {
+      return errorResponse(res, 'MISSING_EMAIL', 'Email e obrigatorio', 400);
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: email.trim().toLowerCase() },
+    });
+
+    if (!user) {
+      return errorResponse(res, 'USER_NOT_FOUND', 'Usuario nao encontrado', 404);
+    }
+
+    const { v4: uuidv4 } = require('uuid');
+    const token = uuidv4();
+    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours for admin-generated links
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordResetToken: token,
+        passwordResetExpires: expires,
+        isActive: true, // Admin reset also activates the account
+      },
+    });
+
+    const resetUrl = `https://painel.nucleoia.online/redefinir-senha?token=${token}`;
+
+    await prisma.activityLog.create({
+      data: {
+        userId: user.id,
+        type: 'SYSTEM',
+        description: 'Link de reset gerado manualmente pelo admin',
+        ipAddress: req.ip,
+      },
+    });
+
+    console.log(`[ADMIN_RESET] Generated reset link for: ${user.email} by admin`);
+
+    return successResponse(res, {
+      message: 'Link de reset gerado com sucesso',
+      resetUrl,
+      expiresAt: expires.toISOString(),
+      user: { name: user.name, email: user.email },
+    });
+  } catch (error) {
+    console.error('Admin reset link error:', error);
+    return errorResponse(res, 'ADMIN_RESET_ERROR', 'Erro ao gerar link de reset', 500);
   }
 };

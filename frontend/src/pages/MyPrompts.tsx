@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Search, Copy, Heart, Image, Video, X, Sparkles, Zap, Clock, User, Plus, PenLine, Loader2 } from "lucide-react";
+import { Search, Copy, Heart, Image, Video, X, Sparkles, Zap, Clock, User, Plus, PenLine, Loader2, Globe, Lock } from "lucide-react";
 import { PROMPT_FILTERS, PROMPT_CATEGORIES } from "@/constants/filters";
 import { FilterButtons } from "@/components/filters";
 import GlassCard from "@/components/GlassCard";
@@ -12,10 +12,13 @@ import { useAuth } from "@/contexts/AuthContext";
 import type { Prompt } from "@/types";
 import PromptFormDrawer from "@/components/admin/PromptFormDrawer";
 import { CardAdminActions, DeleteConfirmDialog } from "@/components/admin";
-import { usePrompts, useMyPrompts, useCreateCommunityPrompt, useUpdatePrompt, useDeletePrompt, useLikePrompt, useCopyPrompt } from "@/hooks/useApi";
+import { usePrompts, useMyPrompts, useCreateCommunityPrompt, useUpdateMyPrompt, useDeleteMyPrompt, useLikePrompt, useCopyPrompt, useCategories, useTogglePromptPublic } from "@/hooks/useApi";
+import { usePlanAccess } from "@/hooks/usePlanAccess";
+import UpgradeScreen from "@/components/UpgradeScreen";
 
 const MyPrompts = () => {
   const { isAdmin, user } = useAuth();
+  const { canAccessPrompts } = usePlanAccess();
   const [activeTab, setActiveTab] = useState("all");
   const [activeFilter, setActiveFilter] = useState("all");
   const [selectedCategory, setSelectedCategory] = useState("Todas as Categorias");
@@ -32,10 +35,12 @@ const MyPrompts = () => {
   const { data: allPrompts = [], isLoading: loadingAll } = usePrompts();
   const { data: myPrompts = [], isLoading: loadingMine } = useMyPrompts();
   const createCommunityPrompt = useCreateCommunityPrompt();
-  const updatePrompt = useUpdatePrompt();
-  const deletePrompt = useDeletePrompt();
+  const updatePrompt = useUpdateMyPrompt();
+  const deletePrompt = useDeleteMyPrompt();
   const likePrompt = useLikePrompt();
   const copyPrompt = useCopyPrompt();
+  const { data: categories = [] } = useCategories();
+  const togglePublic = useTogglePromptPublic();
 
   const isLoading = activeTab === "mine" ? loadingMine : loadingAll;
   const displayedPrompts = activeTab === "mine" ? myPrompts : allPrompts;
@@ -117,6 +122,9 @@ const MyPrompts = () => {
       toast.error("Erro ao salvar prompt");
     }
   };
+
+  // Plan access guard
+  if (!canAccessPrompts) return <UpgradeScreen feature="Meus Prompts" />;
 
   return (
     <div className="space-y-4 sm:space-y-6 md:space-y-8 animate-fade-in">
@@ -210,7 +218,23 @@ const MyPrompts = () => {
 
                 <div className="p-4">
                   <h3 className="font-semibold text-foreground mb-1 line-clamp-1">{prompt.title}</h3>
-                  <p className="text-sm text-muted-foreground mb-4">{prompt.category}</p>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm text-muted-foreground">{prompt.category}</p>
+                    {activeTab === "mine" && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          togglePublic.mutateAsync(String(prompt.id)).then((res) => {
+                            toast.success(res.message);
+                          }).catch(() => toast.error('Erro ao alterar visibilidade'));
+                        }}
+                        className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium transition-colors ${(prompt as any).isCommunity ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-muted/50 text-muted-foreground hover:bg-muted'}`}
+                      >
+                        {(prompt as any).isCommunity ? <Globe className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+                        {(prompt as any).isCommunity ? 'Publico' : 'Privado'}
+                      </button>
+                    )}
+                  </div>
                   <div className="flex items-center justify-between">
                     <Button variant="gradient" size="sm" onClick={(e) => handleCopy(prompt, e)}>
                       <Copy className="h-4 w-4 mr-1" />
@@ -312,6 +336,7 @@ const MyPrompts = () => {
         onOpenChange={setFormOpen}
         prompt={editingPrompt}
         onSubmit={handleFormSubmit}
+        categories={categories}
       />
 
       <DeleteConfirmDialog
