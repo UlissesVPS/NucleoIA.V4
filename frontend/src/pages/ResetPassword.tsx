@@ -22,12 +22,9 @@ export default function ResetPassword() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  const hasMinLength = password.length >= 8;
-  const hasUpperCase = /[A-Z]/.test(password);
-  const hasLowerCase = /[a-z]/.test(password);
-  const hasNumber = /[0-9]/.test(password);
+  const hasMinLength = password.length >= 6;
   const passwordsMatch = password === confirmPassword && password.length > 0;
-  const isPasswordValid = hasMinLength && hasUpperCase && hasLowerCase && hasNumber && passwordsMatch;
+  const isPasswordValid = hasMinLength && passwordsMatch;
 
   useEffect(() => {
     if (!token) {
@@ -227,10 +224,7 @@ export default function ResetPassword() {
 
             <div className="bg-muted/50 rounded-lg p-4 space-y-2">
               <p className="text-xs text-muted-foreground mb-2">Sua senha deve conter:</p>
-              <ValidationItem valid={hasMinLength} text="Minimo 8 caracteres" />
-              <ValidationItem valid={hasUpperCase} text="Uma letra maiuscula" />
-              <ValidationItem valid={hasLowerCase} text="Uma letra minuscula" />
-              <ValidationItem valid={hasNumber} text="Um numero" />
+              <ValidationItem valid={hasMinLength} text="Minimo 6 caracteres" />
               <ValidationItem valid={passwordsMatch} text="Senhas coincidem" />
             </div>
 

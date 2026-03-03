@@ -70,10 +70,7 @@ const Signup = () => {
 
       if (data.success) {
         setIsSuccess(true);
-        toast.success('Conta criada com sucesso!');
-        setTimeout(() => {
-          navigate('/login', { replace: true });
-        }, 2000);
+        toast.success('Solicitacao enviada! Aguarde aprovacao.');
       }
     } catch (err: any) {
       const errData = err.response?.data;
@@ -109,11 +106,11 @@ const Signup = () => {
             </div>
 
             <h2 className="text-2xl font-bold text-foreground mb-3">
-              Conta Criada com Sucesso!
+              Solicitacao Enviada!
             </h2>
 
             <p className="text-muted-foreground mb-6">
-              Sua conta foi criada. Voce sera redirecionado para a pagina de login em instantes...
+              Seu cadastro foi recebido com sucesso! Aguarde a aprovacao do administrador para acessar a plataforma. Voce sera notificado por email quando sua conta for ativada.
             </p>
 
             <div className="bg-muted/50 rounded-xl p-4 mb-6">
@@ -129,7 +126,7 @@ const Signup = () => {
               className="w-full"
               onClick={() => navigate('/login')}
             >
-              Ir para Login
+              Voltar para Login
             </Button>
           </div>
 

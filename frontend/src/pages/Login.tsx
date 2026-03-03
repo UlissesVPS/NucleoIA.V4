@@ -51,6 +51,8 @@ const Login = () => {
         setErrorMsg('Sua conta esta inativa. Entre em contato com o suporte.');
       } else if (code === 'AUTH_INVALID_CREDENTIALS') {
         setErrorMsg('Email ou senha incorretos.');
+      } else if (code === 'AUTH_PENDING_APPROVAL') {
+        setErrorMsg('Seu cadastro esta aguardando aprovacao do administrador. Voce sera notificado por email quando sua conta for ativada.');
       } else {
         setErrorMsg(errData?.error?.message || 'Erro ao fazer login. Tente novamente.');
       }

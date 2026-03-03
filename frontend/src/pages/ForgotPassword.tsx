@@ -60,7 +60,7 @@ export default function ForgotPassword() {
               </p>
               <p className="text-sm text-muted-foreground text-center leading-relaxed">
                 Se o email <strong className="text-foreground">{email}</strong> estiver
-                cadastrado e ativo, voce recebera um link de recuperacao.
+                cadastrado, voce recebera um link de recuperacao.
                 Verifique sua caixa de entrada e spam.
               </p>
               <p className="text-xs text-muted-foreground text-center">
