@@ -12,7 +12,7 @@ import { moduleRouter, lessonRouter } from './routes/courses.routes';
 const app = express();
 
 // Trust Nginx proxy - necessario para capturar IP real via X-Forwarded-For
-app.set("trust proxy", true);
+app.set("trust proxy", 1); // Trust only 1 proxy (Nginx)
 
 // Middlewares
 app.use(helmet());
