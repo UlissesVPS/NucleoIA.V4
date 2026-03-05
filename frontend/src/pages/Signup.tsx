@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, Lock, Eye, EyeOff, User, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, User, Loader2, AlertCircle, CheckCircle2, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import InputWithIcon from '@/components/InputWithIcon';
 import Logo from '@/components/Logo';
@@ -18,12 +18,13 @@ const Signup = () => {
   });
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [showRecoveryHint, setShowRecoveryHint] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const navigate = useNavigate();
 
   const handleChange = (field: string) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, [field]: e.target.value });
-    if (errorMsg) setErrorMsg('');
+    if (errorMsg) { setErrorMsg(''); setShowRecoveryHint(false); }
   };
 
   const validateForm = (): string | null => {
@@ -77,7 +78,8 @@ const Signup = () => {
       const code = errData?.error?.code;
 
       if (code === 'REGISTER_EMAIL_EXISTS') {
-        setErrorMsg('Este email ja esta cadastrado. Tente fazer login.');
+        setErrorMsg('Este email ja possui uma conta. Se voce comprou acesso, sua conta foi criada automaticamente.');
+        setShowRecoveryHint(true);
       } else if (code === 'REGISTER_INVALID_EMAIL') {
         setErrorMsg('Formato de email invalido.');
       } else if (code === 'REGISTER_WEAK_PASSWORD') {
@@ -157,17 +159,41 @@ const Signup = () => {
         </div>
 
         <div className="glass-card-gradient rounded-2xl p-8">
-          <div className="mb-6">
+          <div className="mb-4">
             <h2 className="text-xl font-bold text-foreground mb-2">Crie sua conta</h2>
             <p className="text-sm text-muted-foreground">
               Preencha os dados abaixo para criar sua conta na plataforma
             </p>
           </div>
 
+          <div className="flex items-start gap-3 bg-primary/5 border border-primary/10 rounded-lg p-3 mb-5">
+            <Info className="h-4 w-4 text-primary/70 shrink-0 mt-0.5" />
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              <strong className="text-foreground/80">Comprou acesso pela Lastlink?</strong>{' '}
+              Sua conta ja foi criada com o email da compra. Use{' '}
+              <Link to="/esqueci-senha" className="text-primary hover:underline">
+                Esqueci minha senha
+              </Link>{' '}
+              para definir sua senha e acessar.
+            </p>
+          </div>
+
           {errorMsg && (
-            <div className="flex items-start gap-3 bg-destructive/10 border border-destructive/20 rounded-lg p-3 mb-5">
+            <div className="flex items-start gap-3 bg-destructive/10 border border-destructive/20 rounded-lg p-3 mb-3">
               <AlertCircle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
               <p className="text-sm text-destructive">{errorMsg}</p>
+            </div>
+          )}
+
+          {showRecoveryHint && (
+            <div className="flex items-start gap-3 bg-primary/10 border border-primary/20 rounded-lg p-3 mb-5">
+              <Info className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+              <div className="text-sm">
+                <p className="text-muted-foreground mb-1">Defina sua senha para acessar:</p>
+                <Link to="/esqueci-senha" className="text-primary hover:underline font-medium">
+                  Clique aqui para definir sua senha
+                </Link>
+              </div>
             </div>
           )}
 

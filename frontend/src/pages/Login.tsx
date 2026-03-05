@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import InputWithIcon from '@/components/InputWithIcon';
 import Logo from '@/components/Logo';
@@ -46,7 +46,7 @@ const Login = () => {
       const code = errData?.error?.code;
 
       if (code === 'PASSWORD_RESET_REQUIRED') {
-        setErrorMsg('Voce precisa definir sua senha. Verifique seu email de boas-vindas.');
+        setErrorMsg('Voce precisa definir sua senha. Use "Esqueci minha senha" abaixo para criar uma nova.');
       } else if (code === 'AUTH_USER_INACTIVE') {
         setErrorMsg('Sua conta esta inativa. Entre em contato com o suporte.');
       } else if (code === 'AUTH_INVALID_CREDENTIALS') {
@@ -152,7 +152,19 @@ const Login = () => {
             </Button>
           </form>
 
-          <div className="mt-6 text-center">
+          <div className="flex items-start gap-3 bg-primary/5 border border-primary/10 rounded-lg p-3 mt-5">
+            <Info className="h-4 w-4 text-primary/70 shrink-0 mt-0.5" />
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              <strong className="text-foreground/80">Primeiro acesso apos compra?</strong>{' '}
+              Use{' '}
+              <Link to="/esqueci-senha" className="text-primary hover:underline">
+                Esqueci minha senha
+              </Link>{' '}
+              para definir sua senha com o email da compra.
+            </p>
+          </div>
+
+          <div className="mt-4 text-center">
             <p className="text-sm text-muted-foreground">
               Nao tem uma conta?{' '}
               <Link

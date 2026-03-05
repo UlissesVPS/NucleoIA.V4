@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Mail, ArrowLeft, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Mail, ArrowLeft, Loader2, CheckCircle2, AlertCircle, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import InputWithIcon from '@/components/InputWithIcon';
 import Logo from '@/components/Logo';
@@ -84,6 +84,13 @@ export default function ForgotPassword() {
                 <p className="text-sm text-muted-foreground mt-1">
                   Digite seu email e enviaremos um link para redefinir sua senha
                 </p>
+                <div className="flex items-start gap-2 bg-primary/5 border border-primary/10 rounded-lg p-2.5 mt-3">
+                  <Info className="h-4 w-4 text-primary/70 shrink-0 mt-0.5" />
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    <strong className="text-foreground/80">Comprou acesso e nunca definiu senha?</strong>{' '}
+                    Use o email da compra aqui para criar sua senha de acesso.
+                  </p>
+                </div>
               </div>
 
               {uiState === 'error' && errorMsg && (
