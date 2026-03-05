@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useDeferredValue } from "react";
 import {
   Search,
   Copy,
@@ -93,7 +93,11 @@ const MembersTab = () => {
     action: "suspend" | "reactivate";
   } | null>(null);
 
-  const { data: usersData, isLoading, refetch } = useUsers({ limit: 200 });
+  const deferredSearch = useDeferredValue(searchQuery);
+  const { data: usersData, isLoading, refetch } = useUsers({
+    limit: 200,
+    ...(deferredSearch.trim() ? { search: deferredSearch.trim() } : {}),
+  });
   const { data: realStats, isLoading: statsLoading } = useUserStats();
   const updateStatus = useUpdateUserStatus();
   const updateSubscription = useUpdateSubscription();
@@ -101,18 +105,9 @@ const MembersTab = () => {
   const users: MemberUser[] = usersData?.data || [];
   const pagination = usersData?.pagination;
 
-  // Client-side search filter by email
+  // Server-side search (backend handles name/email filtering)
   const filteredUsers = useMemo(() => {
     let result = [...users];
-
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (u) =>
-          u.email.toLowerCase().includes(q) ||
-          u.name.toLowerCase().includes(q)
-      );
-    }
 
     if (sortByExpiration) {
       result.sort((a, b) => {
